@@ -28,11 +28,11 @@ Zero dependencies beyond Go stdlib.
 
 Three files with build tags:
 
-| File | Tag | Status |
-|------|-----|--------|
-| `linux.go` | `//go:build linux` | Complete |
-| `darwin.go` | `//go:build darwin` | Complete |
-| `windows.go` | `//go:build windows` | Partial |
+| File         | Tag                  | Status   |
+| ------------ | -------------------- | -------- |
+| `linux.go`   | `//go:build linux`   | Complete |
+| `darwin.go`  | `//go:build darwin`  | Complete |
+| `windows.go` | `//go:build windows` | Partial  |
 
 **Critical rule**: Every file in this package MUST have a build tag. If one file has no tag, it compiles into all platforms and causes "redeclared" errors. The linux file originally lacked a tag — don't remove it.
 
