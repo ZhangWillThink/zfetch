@@ -3,6 +3,8 @@
 ## Build & Test
 
 ```bash
+bash scripts/build.sh   # Build all platforms (Linux/macOS, amd64/arm64) to dist/
+
 go build              # Linux native
 GOOS=darwin GOARCH=arm64 go build ./...   # macOS Apple Silicon
 GOOS=darwin GOARCH=amd64 go build ./...   # macOS Intel

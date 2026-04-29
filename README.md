@@ -20,7 +20,7 @@ curl -fsSL https://github.com/ZhangWillThink/zfetch/releases/latest/download/ins
 Or specify a version:
 
 ```bash
-ZFETCH_VERSION=v0.1.1 curl -fsSL https://github.com/ZhangWillThink/zfetch/releases/download/v0.1.1/install.sh | bash
+curl -fsSL https://github.com/ZhangWillThink/zfetch/releases/latest/download/install.sh | ZFETCH_VERSION=v0.2.0 bash
 ```
 
 ### Build from source
@@ -113,7 +113,7 @@ Config files use **JSONC** format (JSON with `//` and `/* */` comments).
 
 ```jsonc
 {
-  "structure": "title:separator:os:kernel:uptime:packages:shell:resolution:de:wm:terminal:cpu:gpu:memory:disk",
+  "structure": "title:separator:os:host:kernel:uptime:packages:shell:resolution:de:wm:terminal:cpu:gpu:memory:swap:disk:battery:localip:locale",
   "separator": "~",
   "colorKeys": "cyan",
   "colorTitle": "bright_cyan",
@@ -127,6 +127,8 @@ Use `zfetch --list-config-paths` to see all search paths.
 ## Building
 
 ```bash
+bash scripts/build.sh   # Build all platforms to dist/
+
 # Linux (native)
 go build
 

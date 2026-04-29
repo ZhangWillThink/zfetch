@@ -20,7 +20,7 @@ curl -fsSL https://github.com/ZhangWillThink/zfetch/releases/latest/download/ins
 或指定版本：
 
 ```bash
-ZFETCH_VERSION=v0.1.1 curl -fsSL https://github.com/ZhangWillThink/zfetch/releases/download/v0.1.1/install.sh | bash
+curl -fsSL https://github.com/ZhangWillThink/zfetch/releases/latest/download/install.sh | ZFETCH_VERSION=v0.2.0 bash
 ```
 
 ### 从源码构建
@@ -36,6 +36,7 @@ go build
 | ---------- | ---------------- | :---: | :---: | :-----: |
 | title      | 用户和主机名     |   ✓   |   ✓   |    —    |
 | os         | 系统名称和版本   |   ✓   |   ✓   |    ✓    |
+| host       | 主机型号         |   ✓   |   ✓   |    —    |
 | kernel     | 内核详情         |   ✓   |   ✓   |    ✓    |
 | uptime     | 系统运行时间     |   ✓   |   ✓   |    —    |
 | packages   | 软件包数量       |   ✓   |   ✓   |    —    |
@@ -45,15 +46,25 @@ go build
 | wm         | 窗口管理器       |   ✓   |   ✓   |    —    |
 | terminal   | 终端模拟器       |   ✓   |   ✓   |    ✓    |
 | cpu        | CPU 型号和核心数 |   ✓   |   ✓   |    ✓    |
-| gpu        | 显卡名称         |   ✓   |   ✓   |    ✓    |
+| gpu        | 显卡信息（多卡） |   ✓   |   ✓   |    ✓    |
 | memory     | 内存使用情况     |   ✓   |   ✓   |    —    |
-| disk       | 磁盘使用情况     |   ✓   |   ✓   |    —    |
+| swap       | 交换分区使用     |   ✓   |   ✓   |    —    |
+| disk       | 磁盘使用（多盘） |   ✓   |   ✓   |    ✓    |
+| battery    | 电池状态         |   ✓   |   ✓   |    —    |
+| localip    | 本地 IP 地址     |   ✓   |   ✓   |    —    |
+| locale     | 系统语言区域     |   ✓   |   ✓   |    —    |
 
 ## 用法
 
 ```bash
 # 基本使用
 zfetch
+
+# 升级到最新版本
+zfetch upgrade
+
+# 卸载
+zfetch uninstall
 
 # 使用预设配置
 zfetch -c default
@@ -85,6 +96,8 @@ zfetch --pipe
 | `--list-logos`             | 列出可用 Logo                |
 | `--list-presets`           | 列出可用预设                 |
 | `--gen-config`             | 显示默认配置路径             |
+| `upgrade`                  | 升级到最新版本               |
+| `uninstall`                | 卸载 zfetch                  |
 
 ### 颜色
 
@@ -100,7 +113,7 @@ zfetch --pipe
 
 ```jsonc
 {
-  "structure": "title:separator:os:kernel:uptime:packages:shell:resolution:de:wm:terminal:cpu:gpu:memory:disk",
+  "structure": "title:separator:os:host:kernel:uptime:packages:shell:resolution:de:wm:terminal:cpu:gpu:memory:swap:disk:battery:localip:locale",
   "separator": "~",
   "colorKeys": "cyan",
   "colorTitle": "bright_cyan",
@@ -114,6 +127,8 @@ zfetch --pipe
 ## 构建
 
 ```bash
+bash scripts/build.sh   # 构建所有平台到 dist/
+
 # Linux (原生)
 go build
 
