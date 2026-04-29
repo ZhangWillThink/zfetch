@@ -11,6 +11,20 @@
 
 ## 快速开始
 
+### 通过 curl 安装（Linux & macOS）
+
+```bash
+curl -fsSL https://github.com/ZhangWillThink/zfetch/releases/latest/download/install.sh | bash
+```
+
+或指定版本：
+
+```bash
+ZFETCH_VERSION=v0.1.1 curl -fsSL https://github.com/ZhangWillThink/zfetch/releases/download/v0.1.1/install.sh | bash
+```
+
+### 从源码构建
+
 ```bash
 go build
 ./zfetch

@@ -4,10 +4,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"sort"
 
 	"github.com/WillZhang/zfetch/config"
 	"github.com/WillZhang/zfetch/display"
+	"github.com/WillZhang/zfetch/internal/uninstall"
+	"github.com/WillZhang/zfetch/internal/upgrade"
 	_ "github.com/WillZhang/zfetch/modules"
 )
 
@@ -52,13 +55,29 @@ func main() {
 
 	flag.Parse()
 
+	if flag.Arg(0) == "upgrade" {
+		if err := upgrade.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if flag.Arg(0) == "uninstall" {
+		if err := uninstall.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if showHelp {
 		printHelp()
 		return
 	}
 
 	if showVersion {
-		fmt.Println("zfetch v0.1.0 (linux/amd64)")
+		fmt.Printf("zfetch %s (%s/%s)\n", upgrade.CurrentVersion, runtime.GOOS, runtime.GOARCH)
 		return
 	}
 
@@ -175,6 +194,8 @@ func printHelp() {
 	fmt.Print(`zfetch - A fast and feature-rich system information tool
 
 Usage: zfetch [options]
+       zfetch upgrade        Upgrade to the latest version
+       zfetch uninstall      Uninstall zfetch
 
 Options:
   -h, --help              Display this help message

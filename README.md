@@ -11,6 +11,20 @@ A fast, feature-rich system information tool for the terminal — inspired by ne
 
 ## Quick Start
 
+### Install via curl (Linux & macOS)
+
+```bash
+curl -fsSL https://github.com/ZhangWillThink/zfetch/releases/latest/download/install.sh | bash
+```
+
+Or specify a version:
+
+```bash
+ZFETCH_VERSION=v0.1.1 curl -fsSL https://github.com/ZhangWillThink/zfetch/releases/download/v0.1.1/install.sh | bash
+```
+
+### Build from source
+
 ```bash
 go build
 ./zfetch
@@ -40,6 +54,12 @@ go build
 ```bash
 # Basic
 zfetch
+
+# Upgrade to latest version
+zfetch upgrade
+
+# Uninstall
+zfetch uninstall
 
 # Load a preset
 zfetch -c default
@@ -71,6 +91,8 @@ zfetch --pipe
 | `--list-logos`            | List available logos                     |
 | `--list-presets`          | List available presets                   |
 | `--gen-config`            | Show default config path                 |
+| `upgrade`                 | Upgrade to the latest version            |
+| `uninstall`               | Uninstall zfetch                         |
 
 ### Colors
 
