@@ -1,0 +1,6 @@
+{
+  "structure": "title:separator:os:kernel:uptime:packages:shell:resolution:de:wm:terminal:cpu:gpu:memory:disk",
+  "separator": "~",
+  "colorKeys": "cyan",
+  "colorTitle": "bright_cyan"
+}
