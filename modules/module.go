@@ -1,9 +1,9 @@
 package modules
 
 type ModuleInfo struct {
-	Key           string
-	Value         string
-	UsagePercent  float64
+	Key          string
+	Value        string
+	UsagePercent float64
 }
 
 type Module interface {
