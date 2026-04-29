@@ -12,7 +12,7 @@ import (
 
 const (
 	Repo           = "ZhangWillThink/zfetch"
-	CurrentVersion = "v0.1.1"
+	CurrentVersion = "v0.2.0"
 )
 
 type release struct {

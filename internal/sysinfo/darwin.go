@@ -4,6 +4,8 @@ package sysinfo
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"strconv"
@@ -64,26 +66,79 @@ func GetCPU() *CPUInfo {
 	return info
 }
 
-func GetGPU() *GPUInfo {
-	info := &GPUInfo{}
+func GetGPU() []*GPUInfo {
+	var gpus []*GPUInfo
 	out, err := exec.Command("system_profiler", "SPDisplaysDataType").Output()
-	if err == nil {
-		lines := strings.Split(string(out), "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "Chipset Model:") {
-				if info.Name != "" {
-					info.Name += ", "
+	if err != nil {
+		return gpus
+	}
+
+	lines := strings.Split(string(out), "\n")
+	var currentGPU *GPUInfo
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		if strings.HasPrefix(line, "Chipset Model:") || strings.HasPrefix(line, "Model:") {
+			if currentGPU != nil && currentGPU.Name != "" {
+				gpus = append(gpus, currentGPU)
+			}
+			currentGPU = &GPUInfo{}
+			if prefix := "Chipset Model:"; strings.HasPrefix(line, prefix) {
+				currentGPU.Name = strings.TrimSpace(strings.TrimPrefix(line, prefix))
+			} else {
+				currentGPU.Name = strings.TrimSpace(strings.TrimPrefix(line, "Model:"))
+			}
+		}
+
+		if currentGPU != nil {
+			if strings.HasPrefix(line, "VRAM (Total):") || strings.HasPrefix(line, "VRAM (Dynamic, Max):") {
+				vram := strings.TrimSpace(line[strings.Index(line, ":")+1:])
+				vram = strings.TrimSuffix(vram, " MB")
+				vram = strings.TrimSuffix(vram, " GB")
+				if strings.Contains(line, "GB") {
+					gb, _ := strconv.Atoi(vram)
+					currentGPU.MemoryMiB = gb * 1024
+				} else {
+					mb, _ := strconv.Atoi(vram)
+					currentGPU.MemoryMiB = mb
 				}
-				name := strings.TrimSpace(strings.TrimPrefix(line, "Chipset Model:"))
-				info.Name += name
+			}
+
+			if strings.HasPrefix(line, "Bus:") {
+				bus := strings.TrimSpace(line[strings.Index(line, ":")+1:])
+				if strings.Contains(bus, "Built-In") || strings.Contains(bus, "Integrated") {
+					currentGPU.Type = "Integrated"
+				} else {
+					currentGPU.Type = "Discrete"
+				}
+			}
+
+			if strings.HasPrefix(line, "Vendor:") {
+				vendor := strings.TrimSpace(line[strings.Index(line, ":")+1:])
+				if vendor == "Intel" || vendor == "Apple" {
+					if currentGPU.Type == "" {
+						currentGPU.Type = "Integrated"
+					}
+				}
+				if vendor == "AMD" || vendor == "NVIDIA" || vendor == "Nvidia" {
+					currentGPU.Type = "Discrete"
+				}
 			}
 		}
 	}
-	if info.Name == "" {
-		info.Name = "Unknown"
+
+	if currentGPU != nil && currentGPU.Name != "" {
+		gpus = append(gpus, currentGPU)
 	}
-	return info
+
+	if len(gpus) == 0 {
+		gpus = append(gpus, &GPUInfo{Name: "Unknown"})
+	}
+	return gpus
 }
 
 func GetMemory() *MemoryInfo {
@@ -148,32 +203,63 @@ func GetMemory() *MemoryInfo {
 	return info
 }
 
-func GetDisk() *DiskInfo {
-	info := &DiskInfo{Path: "/"}
+func GetDisk() []*DiskInfo {
+	var disks []*DiskInfo
 
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs("/", &stat); err != nil {
-		out, err := exec.Command("df", "-k", "/").Output()
-		if err == nil {
-			for _, line := range strings.Split(string(out), "\n") {
-				fields := strings.Fields(line)
-				if len(fields) >= 4 && fields[len(fields)-1] == "/" {
-					totalKB, _ := strconv.ParseUint(fields[1], 10, 64)
-					availKB, _ := strconv.ParseUint(fields[3], 10, 64)
-					info.Total = totalKB * 1024
-					info.Available = availKB * 1024
-					info.Used = info.Total - info.Available
-					break
-				}
-			}
-		}
-		return info
+	out, err := exec.Command("df", "-k").Output()
+	if err != nil {
+		return disks
 	}
 
-	info.Total = stat.Blocks * uint64(stat.Bsize)
-	info.Available = stat.Bavail * uint64(stat.Bsize)
-	info.Used = info.Total - info.Available
-	return info
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 6 {
+			continue
+		}
+
+		device := fields[0]
+		mountpoint := fields[len(fields)-1]
+
+		if !strings.HasPrefix(device, "/dev/") {
+			continue
+		}
+
+		var stat syscall.Statfs_t
+		if err := syscall.Statfs(mountpoint, &stat); err != nil {
+			continue
+		}
+
+		total := stat.Blocks * uint64(stat.Bsize)
+		available := stat.Bavail * uint64(stat.Bsize)
+		if total == 0 {
+			continue
+		}
+
+		disks = append(disks, &DiskInfo{
+			Path:       mountpoint,
+			Total:      total,
+			Used:       total - available,
+			Available:  available,
+			Filesystem: fields[1],
+		})
+	}
+
+	if len(disks) == 0 {
+		var stat syscall.Statfs_t
+		if err := syscall.Statfs("/", &stat); err == nil {
+			total := stat.Blocks * uint64(stat.Bsize)
+			available := stat.Bavail * uint64(stat.Bsize)
+			disks = append(disks, &DiskInfo{
+				Path:       "/",
+				Total:      total,
+				Used:       total - available,
+				Available:  available,
+				Filesystem: "apfs",
+			})
+		}
+	}
+
+	return disks
 }
 
 func GetUptime() *UptimeInfo {
@@ -363,21 +449,138 @@ func GetResolution() *ResolutionInfo {
 		return info
 	}
 
-	var currentDisplay string
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
 
 		if strings.HasPrefix(line, "Resolution:") {
 			res := strings.TrimSpace(strings.TrimPrefix(line, "Resolution:"))
 			info.Resolutions = append(info.Resolutions, res)
-			currentDisplay = ""
+		}
+	}
+
+	return info
+}
+
+func GetHost() *HostInfo {
+	info := &HostInfo{}
+
+	out, err := exec.Command("sysctl", "-n", "hw.model").Output()
+	if err == nil {
+		info.Product = strings.TrimSpace(string(out))
+	}
+
+	return info
+}
+
+func GetSwap() *SwapInfo {
+	info := &SwapInfo{}
+
+	out, err := exec.Command("sysctl", "-n", "vm.swapusage").Output()
+	if err == nil {
+		line := strings.TrimSpace(string(out))
+		parts := strings.Fields(line)
+		for i, p := range parts {
+			if p == "total" && i+2 < len(parts) {
+				totalStr := strings.TrimSuffix(parts[i+2], "M")
+				total, _ := strconv.ParseFloat(strings.TrimSuffix(totalStr, ".00"), 64)
+				info.Total = uint64(total * 1024 * 1024)
+			}
+			if p == "used" && i+2 < len(parts) {
+				usedStr := strings.TrimSuffix(parts[i+2], "M")
+				used, _ := strconv.ParseFloat(strings.TrimSuffix(usedStr, ".00"), 64)
+				info.Used = uint64(used * 1024 * 1024)
+			}
+		}
+	}
+
+	return info
+}
+
+func GetBattery() *BatteryInfo {
+	info := &BatteryInfo{}
+
+	out, err := exec.Command("pmset", "-g", "batt").Output()
+	if err != nil {
+		return info
+	}
+
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "%") {
+			pctStr := ""
+			for i, c := range line {
+				if c == '%' {
+					for j := i - 1; j >= 0 && line[j] >= '0' && line[j] <= '9'; j-- {
+						pctStr = string(line[j]) + pctStr
+					}
+					break
+				}
+			}
+			if pctStr != "" {
+				info.Percentage, _ = strconv.Atoi(pctStr)
+			}
+
+			lower := strings.ToLower(line)
+			if strings.Contains(lower, "charging") {
+				info.Status = "Charging"
+			} else if strings.Contains(lower, "discharging") {
+				info.Status = "Discharging"
+			} else if strings.Contains(lower, "charged") || strings.Contains(lower, "full") {
+				info.Status = "Full"
+			} else if strings.Contains(lower, "ac") {
+				info.Status = "AC Connected"
+			}
+			break
+		}
+	}
+
+	return info
+}
+
+func GetLocalIP() *LocalIPInfo {
+	info := &LocalIPInfo{}
+
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return info
+	}
+
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue
 		}
 
-		if strings.Contains(strings.ToLower(line), "display") && strings.HasSuffix(line, ":") {
-			currentDisplay = line
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
 		}
 
-		_ = currentDisplay
+		for _, addr := range addrs {
+			ipnet, ok := addr.(*net.IPNet)
+			if !ok || ipnet.IP.IsLoopback() || ipnet.IP.To4() == nil {
+				continue
+			}
+
+			prefixLen, _ := ipnet.Mask.Size()
+			entry := LocalIPEntry{
+				Name: iface.Name,
+				IP:   fmt.Sprintf("%s/%d", ipnet.IP.String(), prefixLen),
+			}
+			info.Interfaces = append(info.Interfaces, entry)
+		}
+	}
+
+	return info
+}
+
+func GetLocale() *LocaleInfo {
+	info := &LocaleInfo{}
+
+	if lang := os.Getenv("LANG"); lang != "" {
+		info.Locale = lang
 	}
 
 	return info

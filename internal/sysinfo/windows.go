@@ -42,7 +42,7 @@ func GetCPU() *CPUInfo {
 	return info
 }
 
-func GetGPU() *GPUInfo {
+func GetGPU() []*GPUInfo {
 	info := &GPUInfo{}
 	out, err := exec.Command("wmic", "path", "win32_videocontroller", "get", "name").Output()
 	if err == nil {
@@ -54,15 +54,15 @@ func GetGPU() *GPUInfo {
 	if info.Name == "" {
 		info.Name = "Unknown"
 	}
-	return info
+	return []*GPUInfo{info}
 }
 
 func GetMemory() *MemoryInfo {
 	return &MemoryInfo{}
 }
 
-func GetDisk() *DiskInfo {
-	return &DiskInfo{Path: "C:\\"}
+func GetDisk() []*DiskInfo {
+	return []*DiskInfo{{Path: "C:\\"}}
 }
 
 func GetUptime() *UptimeInfo {
@@ -99,4 +99,24 @@ func GetTerminal() *TerminalInfo {
 
 func GetResolution() *ResolutionInfo {
 	return &ResolutionInfo{}
+}
+
+func GetHost() *HostInfo {
+	return &HostInfo{}
+}
+
+func GetSwap() *SwapInfo {
+	return &SwapInfo{}
+}
+
+func GetBattery() *BatteryInfo {
+	return &BatteryInfo{}
+}
+
+func GetLocalIP() *LocalIPInfo {
+	return &LocalIPInfo{}
+}
+
+func GetLocale() *LocaleInfo {
+	return &LocaleInfo{}
 }

@@ -5,8 +5,11 @@ package sysinfo
 import (
 	"bufio"
 	"context"
+	"fmt"
+	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -120,13 +123,13 @@ func GetCPU() *CPUInfo {
 	return info
 }
 
-func GetGPU() *GPUInfo {
-	info := &GPUInfo{}
+func GetGPU() []*GPUInfo {
+	var gpus []*GPUInfo
 
 	drmDir := "/sys/class/drm"
 	entries, err := os.ReadDir(drmDir)
 	if err != nil {
-		return info
+		return gpus
 	}
 
 	for _, entry := range entries {
@@ -135,50 +138,67 @@ func GetGPU() *GPUInfo {
 			continue
 		}
 
-		vendorPath := drmDir + "/" + name + "/device/vendor"
-		devicePath := drmDir + "/" + name + "/device/device"
+		cardPath := drmDir + "/" + name + "/device"
+		vendorPath := cardPath + "/vendor"
+		devicePath := cardPath + "/device"
 
 		vendorData, _ := os.ReadFile(vendorPath)
 		deviceData, _ := os.ReadFile(devicePath)
 
-		vendor := strings.TrimSpace(string(vendorData))
-		device := strings.TrimSpace(string(deviceData))
+		if vendor := strings.TrimSpace(string(vendorData)); vendor == "" {
+			continue
+		}
+		_ = deviceData
 
-		if vendor != "" && device != "" {
-			if info.Name != "" {
-				info.Name += ", "
-			}
-			gpuName := detectGPUName(name)
-			if gpuName != "" {
-				info.Name += gpuName
-			} else {
-				info.Name += name
+		gpuName := detectGPUName(name)
+		if gpuName == "" {
+			continue
+		}
+
+		gpu := &GPUInfo{Name: strings.TrimSpace(gpuName)}
+
+		vramPath := cardPath + "/mem_info_vram_total"
+		if vramData, err := os.ReadFile(vramPath); err == nil {
+			bytes, _ := strconv.ParseUint(strings.TrimSpace(string(vramData)), 10, 64)
+			gpu.MemoryMiB = int(bytes / (1024 * 1024))
+		}
+
+		bootVgaPath := cardPath + "/boot_vga"
+		if bootData, err := os.ReadFile(bootVgaPath); err == nil {
+			if strings.TrimSpace(string(bootData)) == "1" {
+				gpu.Type = "Discrete"
 			}
 		}
+
+		if gpu.Type == "" {
+			driverPath := cardPath + "/driver"
+			if resolved, err := filepath.EvalSymlinks(driverPath); err == nil {
+				if strings.Contains(resolved, "i915") || strings.Contains(resolved, "amdgpu/apu") {
+					gpu.Type = "Integrated"
+				} else {
+					gpu.Type = "Discrete"
+				}
+			}
+		}
+
+		gpus = append(gpus, gpu)
 	}
 
-	if info.Name == "" {
+	if len(gpus) == 0 {
 		out, err := exec.Command("lspci", "-mm").Output()
 		if err == nil {
 			for _, line := range strings.Split(string(out), "\n") {
 				if strings.Contains(line, "VGA") || strings.Contains(line, "3D") || strings.Contains(line, "Display") {
 					parts := strings.Split(line, `"`)
-					for i, p := range parts {
-						if strings.TrimSpace(p) != "" && i+2 < len(parts) {
-							info.Name = strings.TrimSpace(parts[i+1])
-							break
-						}
+					if len(parts) >= 4 {
+						gpus = append(gpus, &GPUInfo{Name: strings.TrimSpace(parts[3])})
 					}
-					break
 				}
 			}
 		}
 	}
 
-	if info.Name == "" {
-		info.Name = "Unknown"
-	}
-	return info
+	return gpus
 }
 
 func detectGPUName(card string) string {
@@ -230,17 +250,66 @@ func GetMemory() *MemoryInfo {
 	return info
 }
 
-func GetDisk() *DiskInfo {
-	info := &DiskInfo{Path: "/"}
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs("/", &stat); err != nil {
-		return info
+func GetDisk() []*DiskInfo {
+	var disks []*DiskInfo
+
+	data, err := os.ReadFile("/proc/mounts")
+	if err != nil {
+		return disks
 	}
 
-	info.Total = stat.Blocks * uint64(stat.Bsize)
-	info.Available = stat.Bavail * uint64(stat.Bsize)
-	info.Used = info.Total - info.Available
-	return info
+	seen := map[string]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+
+		device := fields[0]
+		mountpoint := fields[1]
+		fstype := fields[2]
+
+		if !strings.HasPrefix(device, "/dev/") {
+			continue
+		}
+
+		if seen[mountpoint] {
+			continue
+		}
+		seen[mountpoint] = true
+
+		isPseudo := false
+		for _, prefix := range []string{"/dev/loop", "/dev/ram", "/dev/sr"} {
+			if strings.HasPrefix(device, prefix) {
+				isPseudo = true
+				break
+			}
+		}
+		if isPseudo {
+			continue
+		}
+
+		var stat syscall.Statfs_t
+		if err := syscall.Statfs(mountpoint, &stat); err != nil {
+			continue
+		}
+
+		total := stat.Blocks * uint64(stat.Bsize)
+		available := stat.Bavail * uint64(stat.Bsize)
+		if total == 0 {
+			continue
+		}
+
+		disks = append(disks, &DiskInfo{
+			Path:       mountpoint,
+			Total:      total,
+			Used:       total - available,
+			Available:  available,
+			Filesystem: fstype,
+		})
+	}
+
+	return disks
 }
 
 func GetUptime() *UptimeInfo {
@@ -422,6 +491,154 @@ func GetResolution() *ResolutionInfo {
 				}
 			}
 		}
+	}
+
+	return info
+}
+
+func GetHost() *HostInfo {
+	info := &HostInfo{}
+
+	productData, _ := os.ReadFile("/sys/class/dmi/id/product_name")
+	if p := strings.TrimSpace(string(productData)); p != "" {
+		info.Product = p
+	}
+
+	versionData, _ := os.ReadFile("/sys/class/dmi/id/product_version")
+	if v := strings.TrimSpace(string(versionData)); v != "" {
+		info.Version = v
+	}
+
+	return info
+}
+
+func GetSwap() *SwapInfo {
+	info := &SwapInfo{}
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return info
+	}
+
+	var total, free uint64
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		val, _ := strconv.ParseUint(fields[1], 10, 64)
+		valKB := val * 1024
+		switch fields[0] {
+		case "SwapTotal:":
+			total = valKB
+		case "SwapFree:":
+			free = valKB
+		}
+	}
+
+	info.Total = total
+	if total > free {
+		info.Used = total - free
+	}
+	return info
+}
+
+func GetBattery() *BatteryInfo {
+	info := &BatteryInfo{}
+
+	entries, err := os.ReadDir("/sys/class/power_supply")
+	if err != nil {
+		return info
+	}
+
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, "BAT") && !strings.HasPrefix(name, "AC") && name != "ADP1" && name != "ACAD" {
+			// check if it's a battery
+			typePath := filepath.Join("/sys/class/power_supply", name, "type")
+			typeData, _ := os.ReadFile(typePath)
+			typeStr := strings.TrimSpace(string(typeData))
+			if typeStr != "Battery" {
+				continue
+			}
+		}
+
+		capPath := filepath.Join("/sys/class/power_supply", name, "capacity")
+		capData, err := os.ReadFile(capPath)
+		if err != nil {
+			continue
+		}
+		cap, _ := strconv.Atoi(strings.TrimSpace(string(capData)))
+		info.Percentage = cap
+
+		statusPath := filepath.Join("/sys/class/power_supply", name, "status")
+		statusData, _ := os.ReadFile(statusPath)
+		status := strings.TrimSpace(string(statusData))
+
+		switch status {
+		case "Charging":
+			info.Status = "Charging"
+		case "Discharging":
+			info.Status = "Discharging"
+		case "Full":
+			info.Status = "Full"
+		case "Not charging":
+			info.Status = "AC Connected"
+		default:
+			info.Status = status
+		}
+
+		if info.Percentage > 0 {
+			break
+		}
+	}
+
+	return info
+}
+
+func GetLocalIP() *LocalIPInfo {
+	info := &LocalIPInfo{}
+
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return info
+	}
+
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			ipnet, ok := addr.(*net.IPNet)
+			if !ok || ipnet.IP.IsLoopback() || ipnet.IP.To4() == nil {
+				continue
+			}
+
+			prefixLen, _ := ipnet.Mask.Size()
+			entry := LocalIPEntry{
+				Name: iface.Name,
+				IP:   fmt.Sprintf("%s/%d", ipnet.IP.String(), prefixLen),
+			}
+			info.Interfaces = append(info.Interfaces, entry)
+		}
+	}
+
+	return info
+}
+
+func GetLocale() *LocaleInfo {
+	info := &LocaleInfo{}
+
+	if lang := os.Getenv("LANG"); lang != "" {
+		info.Locale = lang
 	}
 
 	return info

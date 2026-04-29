@@ -20,8 +20,10 @@ type CPUInfo struct {
 }
 
 type GPUInfo struct {
-	Name   string
-	Driver string
+	Name      string
+	Driver    string
+	MemoryMiB int
+	Type      string
 }
 
 type MemoryInfo struct {
@@ -31,10 +33,11 @@ type MemoryInfo struct {
 }
 
 type DiskInfo struct {
-	Total     uint64
-	Used      uint64
-	Available uint64
-	Path      string
+	Total      uint64
+	Used       uint64
+	Available  uint64
+	Path       string
+	Filesystem string
 }
 
 type PackageInfo struct {
@@ -68,4 +71,32 @@ type TerminalInfo struct {
 
 type ResolutionInfo struct {
 	Resolutions []string
+}
+
+type HostInfo struct {
+	Product string
+	Version string
+}
+
+type SwapInfo struct {
+	Total uint64
+	Used  uint64
+}
+
+type BatteryInfo struct {
+	Percentage int
+	Status     string
+}
+
+type LocalIPEntry struct {
+	Name string
+	IP   string
+}
+
+type LocalIPInfo struct {
+	Interfaces []LocalIPEntry
+}
+
+type LocaleInfo struct {
+	Locale string
 }

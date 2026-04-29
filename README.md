@@ -36,6 +36,7 @@ go build
 | ---------- | ------------------- | :---: | :---: | :-----: |
 | title      | User & Host         |   ✓   |   ✓   |    —    |
 | os         | OS Name & Version   |   ✓   |   ✓   |    ✓    |
+| host       | Host Machine        |   ✓   |   ✓   |    —    |
 | kernel     | Kernel Details      |   ✓   |   ✓   |    ✓    |
 | uptime     | System Uptime       |   ✓   |   ✓   |    —    |
 | packages   | Package Count       |   ✓   |   ✓   |    —    |
@@ -45,9 +46,13 @@ go build
 | wm         | Window Manager      |   ✓   |   ✓   |    —    |
 | terminal   | Terminal Emulator   |   ✓   |   ✓   |    ✓    |
 | cpu        | CPU Model & Cores   |   ✓   |   ✓   |    ✓    |
-| gpu        | GPU Name            |   ✓   |   ✓   |    ✓    |
+| gpu        | GPU Info (multi)    |   ✓   |   ✓   |    ✓    |
 | memory     | RAM Usage           |   ✓   |   ✓   |    —    |
-| disk       | Disk Usage          |   ✓   |   ✓   |    —    |
+| swap       | Swap Usage          |   ✓   |   ✓   |    —    |
+| disk       | Disk Usage (multi)  |   ✓   |   ✓   |    ✓    |
+| battery    | Battery Status      |   ✓   |   ✓   |    —    |
+| localip    | Local IP Address    |   ✓   |   ✓   |    —    |
+| locale     | System Locale       |   ✓   |   ✓   |    —    |
 
 ## Usage
 

@@ -185,7 +185,7 @@ func getAllModules() []string {
 	modules := []string{
 		"title", "separator", "os", "kernel", "uptime", "packages",
 		"shell", "resolution", "de", "wm", "terminal", "cpu", "gpu",
-		"memory", "disk",
+		"memory", "swap", "disk", "host", "battery", "localip", "locale",
 	}
 	return modules
 }

@@ -22,7 +22,7 @@ type Config struct {
 
 func DefaultConfig() *Config {
 	return &Config{
-		Structure:  "title:separator:os:kernel:uptime:packages:shell:resolution:de:wm:terminal:cpu:gpu:memory:disk",
+		Structure:  "title:separator:os:kernel:uptime:packages:shell:resolution:de:wm:terminal:cpu:gpu:memory:swap:disk:host:battery:localip:locale",
 		Separator:  ": ",
 		ColorKeys:  "default",
 		ColorTitle: "default",
