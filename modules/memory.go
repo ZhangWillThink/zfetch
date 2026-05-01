@@ -21,9 +21,9 @@ func (m *MemoryModule) Run() []ModuleInfo {
 		return []ModuleInfo{{Key: "Memory", Value: "Unknown"}}
 	}
 
-	usedMiB := float64(info.Used) / (1024 * 1024)
-	totalMiB := float64(info.Total) / (1024 * 1024)
-	pct := math.Round(float64(info.Used) / float64(info.Total) * 100)
+	usedMiB := float64(info.Used) / bytesPerMiB
+	totalMiB := float64(info.Total) / bytesPerMiB
+	pct := math.Round(clampPercent(float64(info.Used) / float64(info.Total) * 100))
 	return []ModuleInfo{{
 		Key:          "Memory",
 		Value:        fmt.Sprintf("%.0f MiB / %.0f MiB (%.0f%%)", usedMiB, totalMiB, pct),

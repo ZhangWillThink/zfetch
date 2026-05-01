@@ -3,6 +3,7 @@ package modules
 import (
 	"os"
 	"os/user"
+	"runtime"
 )
 
 func init() {
@@ -19,7 +20,11 @@ func (m *TitleModule) Run() []ModuleInfo {
 		userName = u.Username
 	}
 	if userName == "" {
-		userName = os.Getenv("USER")
+		if runtime.GOOS == "windows" {
+			userName = os.Getenv("USERNAME")
+		} else {
+			userName = os.Getenv("USER")
+		}
 	}
 
 	hostname, _ := os.Hostname()

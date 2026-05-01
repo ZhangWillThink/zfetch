@@ -14,17 +14,19 @@ build() {
 
     echo "Building $file..."
 
-    if [ "$os" = "linux" ] && [ "$arch" = "arm64" ]; then
-        CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -o "${DIST}/${file}" .
-    else
-        GOOS="$os" GOARCH="$arch" go build -o "${DIST}/${file}" .
+    local ext=""
+    if [ "$os" = "windows" ]; then
+        ext=".exe"
     fi
+
+    CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -o "${DIST}/${file}${ext}" .
 }
 
 build linux amd64
 build linux arm64
 build darwin amd64
 build darwin arm64
+build windows amd64
 
 echo ""
 echo "Done. Binaries:"

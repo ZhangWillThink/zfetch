@@ -22,10 +22,7 @@ func (m *GPUModule) Run() []ModuleInfo {
 
 	var result []ModuleInfo
 	for i, gpu := range gpus {
-		key := "GPU"
-		if i > 0 {
-			key = fmt.Sprintf("GPU %d", i+1)
-		}
+		key := fmt.Sprintf("GPU %d", i+1)
 
 		value := gpu.Name
 		if gpu.MemoryMiB > 0 {

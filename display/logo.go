@@ -2,6 +2,7 @@ package display
 
 import (
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/WillZhang/zfetch/internal/sysinfo"
@@ -197,6 +198,45 @@ var logoMap = map[string][]string{
 		"    `-+oooooooooooo+-`",
 		"        `.:++++:.",
 	},
+	"macos": {
+		"                .+ooo.",
+		"               .oooooo.",
+		"              .ooooooooo':.",
+		"             .oooooooooooo'.",
+		"          .+8+.;ooooooooooooo.",
+		"          .,;:';ooooooooooooo.",
+		"     .;+dNMMO.;oooooooooooo'.",
+		"   .+NMMMMMMO.;ooooooooooo'.",
+		"  .NMMMMMMMMO.;ooooooooooo'.",
+		"  OMMMMMMMMMO.;ooooooooooo'.",
+		"  OMMMMMMMMMO.:ooooo:;:oo'.",
+		" .NMMMMMMMMMO.:ooooo'  ;o:",
+		"  WMMMMMMMMMO.:oooooo'",
+		"   XMMMMMMMMO.:oooooo'",
+		"    .KMMMMMMO.:oooooo'",
+		"      ,XMMMMO.:oooooo'",
+		"        .;x0O.;ooooo:'",
+		"              :oooooo'",
+		"               ;oooo'",
+		"                ':;'",
+	},
+	"windows": {
+		"          ..,,:;;;:,,..",
+		"      .;oxOXNWWWWNXK0kdl:.",
+		"    'kXWWWWWWWWWWWWWWWWWNXx'",
+		"   ,KWWWWWWWWWWWWWWWWWWWWWX,",
+		"  .KWWWWWWWWWWWWWWWWWWWWWWK.",
+		"  oWWWWWWWWWWWWWWWWWWWWWWWWo",
+		"  xWWWWWWWWWWWWWWWWWWWWWWWWx",
+		"  xWWWWWWWWWWWWWWWWWWWWWWWWx",
+		"  xWWWWWWWWWWWWWWWWWWWWWWWWx",
+		"  xWWWWWWWWWWWWWWWWWWWWWWWWx",
+		"  oWWWWWWWWWWWWWWWWWWWWWWWWo",
+		"  .KWWWWWWWWWWWWWWWWWWWWWWK.",
+		"   ,KWWWWWWWWWWWWWWWWWWWWX,",
+		"    'kXWWWWWWWWWWWWWWWWWNx'",
+		"      .;ldxkO0KXXK0Okdl;.",
+	},
 	"default": {
 		"      ██████╗ ███████╗███████╗████████╗ ██████╗██╗  ██╗",
 		"      ╚════██╗██╔════╝██╔════╝╚══██╔══╝██╔════╝██║  ██║",
@@ -223,8 +263,15 @@ func detectOSLogo() string {
 	}
 
 	name := strings.ToLower(info.Name)
-	for key := range logoMap {
-		if key != "default" && strings.Contains(name, key) {
+	keys := make([]string, 0, len(logoMap))
+	for k := range logoMap {
+		if k != "default" {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if strings.Contains(name, key) {
 			return key
 		}
 	}

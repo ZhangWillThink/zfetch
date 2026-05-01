@@ -3,10 +3,9 @@
 package sysinfo
 
 import (
-	"fmt"
-	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -61,30 +60,29 @@ func GetCPU() *CPUInfo {
 }
 
 func GetGPU() []*GPUInfo {
-	info := &GPUInfo{}
-	out, err := exec.Command("wmic", "path", "win32_videocontroller", "get", "name").Output()
+	cmdArgs := []string{"-NoProfile", "-Command",
+		`Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }`}
+	out, err := exec.Command("powershell", cmdArgs...).Output()
+	if err != nil {
+		cmdArgs = []string{"-NoProfile", "-Command",
+			`Get-WmiObject Win32_VideoController | ForEach-Object { $_.Name }`}
+		out, err = exec.Command("powershell", cmdArgs...).Output()
+	}
+
+	var gpus []*GPUInfo
 	if err == nil {
-		lines := strings.Split(string(out), "\n")
-		if len(lines) > 1 {
-			info.Name = strings.TrimSpace(lines[1])
+		for _, line := range strings.Split(string(out), "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				gpus = append(gpus, &GPUInfo{Name: line})
+			}
 		}
 	}
-	if info.Name == "" {
-		info.Name = "Unknown"
-	}
-	return []*GPUInfo{info}
-}
 
-func GetMemory() *MemoryInfo {
-	v, err := mem.VirtualMemory()
-	if err != nil {
-		return &MemoryInfo{}
+	if len(gpus) == 0 {
+		gpus = append(gpus, &GPUInfo{Name: "Unknown"})
 	}
-	return &MemoryInfo{
-		Total:     v.Total,
-		Used:      v.Used,
-		Available: v.Available,
-	}
+	return gpus
 }
 
 func GetDisk() []*DiskInfo {
@@ -122,32 +120,51 @@ func GetDisk() []*DiskInfo {
 	return disks
 }
 
-func GetUptime() *UptimeInfo {
-	u, err := host.Uptime()
-	if err != nil {
-		return &UptimeInfo{}
-	}
-	return &UptimeInfo{Uptime: u}
-}
-
 func GetShell() *ShellInfo {
-	shell := os.Getenv("COMSPEC")
-	if shell == "" {
-		shell = "cmd.exe"
+	info := &ShellInfo{Name: "cmd"}
+
+	if pwsh, ok := os.LookupEnv("POWERSHELL_DISTRIBUTION_CHANNEL"); ok && pwsh != "" {
+		info.Name = "pwsh"
+	} else if psVer, ok := os.LookupEnv("PSModulePath"); ok && psVer != "" {
+		info.Name = "powershell"
 	}
-	return &ShellInfo{Name: "cmd", Path: shell}
+
+	if shell := os.Getenv("COMSPEC"); shell != "" {
+		info.Path = shell
+	} else {
+		info.Path = "cmd.exe"
+	}
+
+	if ver, ok := os.LookupEnv("POWERSHELL_VERSION"); ok && ver != "" {
+		info.Version = ver
+	}
+
+	return info
 }
 
 func GetPackages() *PackageInfo {
-	return &PackageInfo{}
+	info := &PackageInfo{}
+
+	args := []string{"-NoProfile", "-Command", `winget list --count 2>$null | Measure-Object -Line | Select-Object -ExpandProperty Lines`}
+	out, err := exec.Command("powershell", args...).Output()
+	if err == nil {
+		n := strings.TrimSpace(string(out))
+		if n != "" {
+			if count, errConv := strconv.Atoi(n); errConv == nil && count > 0 {
+				info.Managers = append(info.Managers, "winget")
+				info.Count += count
+			}
+		}
+	}
+	return info
 }
 
 func GetDE() *DEInfo {
-	return &DEInfo{}
+	return &DEInfo{Name: "Fluent"}
 }
 
 func GetWM() *WMInfo {
-	return &WMInfo{}
+	return &WMInfo{Name: "DWM"}
 }
 
 func GetTerminal() *TerminalInfo {
@@ -159,11 +176,30 @@ func GetTerminal() *TerminalInfo {
 }
 
 func GetResolution() *ResolutionInfo {
-	return &ResolutionInfo{}
+	info := &ResolutionInfo{}
+	cmdArgs := []string{"-NoProfile", "-Command",
+		`Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.Screen]::AllScreens | ForEach-Object { "$($_.Bounds.Width)x$($_.Bounds.Height)" }`}
+	out, err := exec.Command("powershell", cmdArgs...).Output()
+	if err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				info.Resolutions = append(info.Resolutions, line)
+			}
+		}
+	}
+	return info
 }
 
 func GetHost() *HostInfo {
-	return &HostInfo{}
+	info := &HostInfo{}
+	cmdArgs := []string{"-NoProfile", "-Command",
+		`Get-CimInstance Win32_ComputerSystem | Select-Object -ExpandProperty Model`}
+	out, err := exec.Command("powershell", cmdArgs...).Output()
+	if err == nil {
+		info.Product = strings.TrimSpace(string(out))
+	}
+	return info
 }
 
 func GetSwap() *SwapInfo {
@@ -178,48 +214,40 @@ func GetSwap() *SwapInfo {
 }
 
 func GetBattery() *BatteryInfo {
-	return &BatteryInfo{}
-}
-
-func GetLocalIP() *LocalIPInfo {
-	info := &LocalIPInfo{}
-
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return info
-	}
-
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 {
-			continue
-		}
-		if iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-
-		for _, addr := range addrs {
-			ipnet, ok := addr.(*net.IPNet)
-			if !ok || ipnet.IP.IsLoopback() || ipnet.IP.To4() == nil {
-				continue
-			}
-
-			prefixLen, _ := ipnet.Mask.Size()
-			entry := LocalIPEntry{
-				Name: iface.Name,
-				IP:   fmt.Sprintf("%s/%d", ipnet.IP.String(), prefixLen),
-			}
-			info.Interfaces = append(info.Interfaces, entry)
+	info := &BatteryInfo{}
+	cmdArgs := []string{"-NoProfile", "-Command",
+		`Get-CimInstance Win32_Battery | Select-Object -ExpandProperty EstimatedChargeRemaining`}
+	out, err := exec.Command("powershell", cmdArgs...).Output()
+	if err == nil {
+		pctStr := strings.TrimSpace(string(out))
+		if pct, errConv := strconv.Atoi(pctStr); errConv == nil && pct >= 0 {
+			info.Percentage = pct
 		}
 	}
 
+	statusArgs := []string{"-NoProfile", "-Command",
+		`Get-CimInstance Win32_Battery | Select-Object -ExpandProperty BatteryStatus`}
+	statusOut, err := exec.Command("powershell", statusArgs...).Output()
+	if err == nil {
+		switch strings.TrimSpace(string(statusOut)) {
+		case "1":
+			info.Status = "Discharging"
+		case "2":
+			info.Status = "AC Connected"
+		case "6", "7", "8", "9", "10", "11":
+			info.Status = "Charging"
+		}
+	}
 	return info
 }
 
 func GetLocale() *LocaleInfo {
-	return &LocaleInfo{}
+	info := &LocaleInfo{}
+	cmdArgs := []string{"-NoProfile", "-Command",
+		`Get-Culture | Select-Object -ExpandProperty Name`}
+	out, err := exec.Command("powershell", cmdArgs...).Output()
+	if err == nil {
+		info.Locale = strings.TrimSpace(string(out))
+	}
+	return info
 }

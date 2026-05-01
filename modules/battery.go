@@ -16,7 +16,7 @@ func (m *BatteryModule) Name() string { return "battery" }
 
 func (m *BatteryModule) Run() []ModuleInfo {
 	info := sysinfo.GetBattery()
-	if info.Status == "" && info.Percentage == 0 {
+	if info.Status == "" {
 		return nil
 	}
 

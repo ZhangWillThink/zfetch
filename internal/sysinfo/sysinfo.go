@@ -1,5 +1,13 @@
 package sysinfo
 
+import (
+	"fmt"
+	"net"
+
+	"github.com/shirou/gopsutil/v4/host"
+	"github.com/shirou/gopsutil/v4/mem"
+)
+
 type OSInfo struct {
 	Name    string
 	Version string
@@ -99,4 +107,63 @@ type LocalIPInfo struct {
 
 type LocaleInfo struct {
 	Locale string
+}
+
+func GetMemory() *MemoryInfo {
+	v, err := mem.VirtualMemory()
+	if err != nil {
+		return &MemoryInfo{}
+	}
+	return &MemoryInfo{
+		Total:     v.Total,
+		Used:      v.Used,
+		Available: v.Available,
+	}
+}
+
+func GetUptime() *UptimeInfo {
+	u, err := host.Uptime()
+	if err != nil {
+		return &UptimeInfo{}
+	}
+	return &UptimeInfo{Uptime: u}
+}
+
+func GetLocalIP() *LocalIPInfo {
+	info := &LocalIPInfo{}
+
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return info
+	}
+
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			ipnet, ok := addr.(*net.IPNet)
+			if !ok || ipnet.IP.IsLoopback() || ipnet.IP.To4() == nil {
+				continue
+			}
+
+			prefixLen, _ := ipnet.Mask.Size()
+			entry := LocalIPEntry{
+				Name: iface.Name,
+				IP:   fmt.Sprintf("%s/%d", ipnet.IP.String(), prefixLen),
+			}
+			info.Interfaces = append(info.Interfaces, entry)
+		}
+	}
+
+	return info
 }

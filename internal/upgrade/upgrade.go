@@ -8,12 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 )
 
-const (
-	Repo           = "ZhangWillThink/zfetch"
-	CurrentVersion = "v0.3.0"
-)
+const Repo = "ZhangWillThink/zfetch"
+
+var CurrentVersion = "v0.4.0"
 
 type release struct {
 	TagName string `json:"tag_name"`
@@ -45,8 +45,18 @@ func Run() error {
 		return fmt.Errorf("failed to resolve executable path: %w", err)
 	}
 
+	exeDir := filepath.Dir(exe)
+	tmpDir := exeDir
+
+	if _, err := os.Stat(exe); err == nil {
+		if f, err := os.OpenFile(exe, os.O_WRONLY, 0); err != nil {
+			_ = f
+			return fmt.Errorf("no write permission for %s (try sudo)", exe)
+		}
+	}
+
 	url := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", Repo, latest, asset)
-	tmp := exe + ".new"
+	tmp := filepath.Join(tmpDir, filepath.Base(exe)+".new")
 
 	if err := downloadFile(url, tmp); err != nil {
 		os.Remove(tmp)
@@ -59,8 +69,11 @@ func Run() error {
 	}
 
 	if err := os.Rename(tmp, exe); err != nil {
+		if err := copyFile(tmp, exe); err != nil {
+			os.Remove(tmp)
+			return fmt.Errorf("replace failed: %w", err)
+		}
 		os.Remove(tmp)
-		return fmt.Errorf("replace failed: %w", err)
 	}
 
 	fmt.Printf("Successfully upgraded to %s\n", latest)
@@ -69,7 +82,9 @@ func Run() error {
 
 func getLatestVersion() (string, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", Repo)
-	resp, err := http.Get(url)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get(url)
 	if err != nil {
 		return "", err
 	}
@@ -91,7 +106,8 @@ func assetName() string {
 }
 
 func downloadFile(url, path string) error {
-	resp, err := http.Get(url)
+	client := &http.Client{Timeout: 300 * time.Second}
+	resp, err := client.Get(url)
 	if err != nil {
 		return err
 	}
@@ -109,4 +125,29 @@ func downloadFile(url, path string) error {
 
 	_, err = io.Copy(f, resp.Body)
 	return err
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	if err != nil {
+		os.Remove(dst)
+		return err
+	}
+
+	if st, err := in.Stat(); err == nil {
+		_ = os.Chmod(dst, st.Mode())
+	}
+	return nil
 }

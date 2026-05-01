@@ -23,9 +23,9 @@ func (m *DiskModule) Run() []ModuleInfo {
 
 	var result []ModuleInfo
 	for _, disk := range disks {
-		usedGiB := float64(disk.Used) / (1024 * 1024 * 1024)
-		totalGiB := float64(disk.Total) / (1024 * 1024 * 1024)
-		pct := math.Round(float64(disk.Used) / float64(disk.Total) * 100)
+		usedGiB := float64(disk.Used) / bytesPerGiB
+		totalGiB := float64(disk.Total) / bytesPerGiB
+		pct := math.Round(clampPercent(float64(disk.Used) / float64(disk.Total) * 100))
 
 		key := "Disk"
 		if len(disks) > 1 {

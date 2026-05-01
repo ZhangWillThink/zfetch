@@ -4,8 +4,6 @@ package sysinfo
 
 import (
 	"context"
-	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -103,40 +101,33 @@ func GetGPU() []*GPUInfo {
 			continue
 		}
 
-		cardPath := drmDir + "/" + name + "/device"
-		vendorPath := cardPath + "/vendor"
-		devicePath := cardPath + "/device"
+		cardPath := filepath.Join(drmDir, name, "device")
 
-		vendorData, _ := os.ReadFile(vendorPath)
-		deviceData, _ := os.ReadFile(devicePath)
-
+		vendorData, _ := os.ReadFile(filepath.Join(cardPath, "vendor"))
 		if vendor := strings.TrimSpace(string(vendorData)); vendor == "" {
 			continue
 		}
-		_ = deviceData
 
-		gpuName := detectGPUName(name)
+		gpuName := detectGPUName(filepath.Join(drmDir, name))
 		if gpuName == "" {
 			continue
 		}
 
 		gpu := &GPUInfo{Name: strings.TrimSpace(gpuName)}
 
-		vramPath := cardPath + "/mem_info_vram_total"
-		if vramData, err := os.ReadFile(vramPath); err == nil {
+		if vramData, err := os.ReadFile(filepath.Join(cardPath, "mem_info_vram_total")); err == nil {
 			bytes, _ := strconv.ParseUint(strings.TrimSpace(string(vramData)), 10, 64)
 			gpu.MemoryMiB = int(bytes / (1024 * 1024))
 		}
 
-		bootVgaPath := cardPath + "/boot_vga"
-		if bootData, err := os.ReadFile(bootVgaPath); err == nil {
+		if bootData, err := os.ReadFile(filepath.Join(cardPath, "boot_vga")); err == nil {
 			if strings.TrimSpace(string(bootData)) == "1" {
 				gpu.Type = "Discrete"
 			}
 		}
 
 		if gpu.Type == "" {
-			driverPath := cardPath + "/driver"
+			driverPath := filepath.Join(cardPath, "driver")
 			if resolved, err := filepath.EvalSymlinks(driverPath); err == nil {
 				if strings.Contains(resolved, "i915") || strings.Contains(resolved, "amdgpu/apu") {
 					gpu.Type = "Integrated"
@@ -166,15 +157,13 @@ func GetGPU() []*GPUInfo {
 	return gpus
 }
 
-func detectGPUName(card string) string {
-	namePath := "/sys/class/drm/" + card + "/device/"
-	entries, _ := os.ReadDir(namePath)
+func detectGPUName(cardPath string) string {
+	entries, _ := os.ReadDir(filepath.Join(cardPath, "device"))
 	for _, e := range entries {
 		if e.IsDir() && strings.HasPrefix(e.Name(), "drm") {
-			vendorPath := namePath + e.Name() + "/vendor_name"
-			devicePath := namePath + e.Name() + "/device_name"
-			vendorData, _ := os.ReadFile(vendorPath)
-			deviceData, _ := os.ReadFile(devicePath)
+			namePath := filepath.Join(cardPath, "device", e.Name())
+			vendorData, _ := os.ReadFile(filepath.Join(namePath, "vendor_name"))
+			deviceData, _ := os.ReadFile(filepath.Join(namePath, "device_name"))
 			vendor := strings.TrimSpace(string(vendorData))
 			dev := strings.TrimSpace(string(deviceData))
 			if vendor != "" || dev != "" {
@@ -185,16 +174,15 @@ func detectGPUName(card string) string {
 	return ""
 }
 
-func GetMemory() *MemoryInfo {
-	v, err := mem.VirtualMemory()
-	if err != nil {
-		return &MemoryInfo{}
+func isPseudoFs(fstype string) bool {
+	switch fstype {
+	case "tmpfs", "devtmpfs", "devfs", "proc", "sysfs",
+		"cgroup", "cgroup2", "devpts", "fusectl", "securityfs",
+		"debugfs", "tracefs", "hugetlbfs", "mqueue", "overlay",
+		"squashfs", "bpf", "configfs", "pstore", "efivarfs":
+		return true
 	}
-	return &MemoryInfo{
-		Total:     v.Total,
-		Used:      v.Used,
-		Available: v.Available,
-	}
+	return false
 }
 
 func GetDisk() []*DiskInfo {
@@ -212,6 +200,10 @@ func GetDisk() []*DiskInfo {
 		}
 		seen[p.Mountpoint] = true
 
+		if isPseudoFs(p.Fstype) {
+			continue
+		}
+
 		usage, err := disk.Usage(p.Mountpoint)
 		if err != nil || usage.Total == 0 {
 			continue
@@ -227,14 +219,6 @@ func GetDisk() []*DiskInfo {
 	}
 
 	return disks
-}
-
-func GetUptime() *UptimeInfo {
-	u, err := host.Uptime()
-	if err != nil {
-		return &UptimeInfo{}
-	}
-	return &UptimeInfo{Uptime: u}
 }
 
 func GetShell() *ShellInfo {
@@ -265,7 +249,7 @@ func GetShell() *ShellInfo {
 	}
 
 	cmd := exec.CommandContext(ctx, info.Name, "-c", versionCmd)
-	cmd.Env = os.Environ()
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
 	out, err := cmd.Output()
 	if err == nil {
 		info.Version = strings.TrimSpace(string(out))
@@ -279,39 +263,71 @@ func GetShell() *ShellInfo {
 
 func GetPackages() *PackageInfo {
 	info := &PackageInfo{}
-	managers := map[string]string{
-		"dpkg":    "/var/lib/dpkg/status",
-		"rpm":     "/var/lib/rpm",
-		"pacman":  "/var/lib/pacman/local",
-		"flatpak": "/var/lib/flatpak/app",
-		"snap":    "/var/lib/snapd/snaps",
-		"nix":     "/nix/store",
-	}
 
-	for mgr, path := range managers {
-		count := countPackages(path)
-		if count > 0 {
-			info.Managers = append(info.Managers, mgr)
-			info.Count += count
-		}
+	if c := countDpkg(); c > 0 {
+		info.Managers = append(info.Managers, "dpkg")
+		info.Count += c
+	}
+	if c := countRpm(); c > 0 {
+		info.Managers = append(info.Managers, "rpm")
+		info.Count += c
+	}
+	if c := countPacman(); c > 0 {
+		info.Managers = append(info.Managers, "pacman")
+		info.Count += c
+	}
+	if c := countDirEntries("/var/lib/flatpak/app"); c > 0 {
+		info.Managers = append(info.Managers, "flatpak")
+		info.Count += c
+	}
+	if c := countDirEntries("/var/lib/snapd/snaps"); c > 0 {
+		info.Managers = append(info.Managers, "snap")
+		info.Count += c
+	}
+	if c := countNix(); c > 0 {
+		info.Managers = append(info.Managers, "nix")
+		info.Count += c
 	}
 
 	return info
 }
 
-func countPackages(path string) int {
+func countDpkg() int {
+	out, err := exec.Command("dpkg-query", "-f", "${Package}\n", "-W").Output()
+	if err != nil {
+		return 0
+	}
+	return len(strings.Split(strings.TrimSpace(string(out)), "\n"))
+}
+
+func countRpm() int {
+	out, err := exec.Command("rpm", "-qa", "--queryformat", "%{name}\n").Output()
+	if err != nil {
+		return 0
+	}
+	return len(strings.Split(strings.TrimSpace(string(out)), "\n"))
+}
+
+func countPacman() int {
+	return countDirEntries("/var/lib/pacman/local")
+}
+
+func countNix() int {
+	out, err := exec.Command("nix-store", "-q", "--references", "/run/current-system/sw").Output()
+	if err != nil {
+		return countDirEntries("/nix/store")
+	}
+	return len(strings.Split(strings.TrimSpace(string(out)), "\n"))
+}
+
+func countDirEntries(path string) int {
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		return 0
 	}
-
 	count := 0
 	for _, e := range entries {
-		name := e.Name()
-		if strings.HasPrefix(name, ".") {
-			continue
-		}
-		if strings.HasSuffix(name, ".snap") {
+		if strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
 		count++
@@ -346,6 +362,18 @@ func GetWM() *WMInfo {
 		info.Name = val
 	}
 
+	if info.Name == "" {
+		if out, err := exec.Command("wmctrl", "-m").Output(); err == nil {
+			for _, line := range strings.Split(string(out), "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "Name:") {
+					info.Name = strings.TrimSpace(strings.TrimPrefix(line, "Name:"))
+					break
+				}
+			}
+		}
+	}
+
 	return info
 }
 
@@ -375,16 +403,38 @@ func GetTerminal() *TerminalInfo {
 func GetResolution() *ResolutionInfo {
 	info := &ResolutionInfo{}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sessionType := os.Getenv("XDG_SESSION_TYPE")
+
+	if sessionType == "wayland" {
+		if out, err := exec.CommandContext(ctx, "wlr-randr").Output(); err == nil {
+			for _, line := range strings.Split(string(out), "\n") {
+				line = strings.TrimSpace(line)
+				if strings.Contains(line, "Enabled") || strings.Contains(line, "current") {
+					parts := strings.Fields(line)
+					if len(parts) >= 2 {
+						info.Resolutions = append(info.Resolutions, parts[0])
+					}
+				}
+			}
+		}
+		if len(info.Resolutions) > 0 {
+			return info
+		}
+	}
+
 	displayVar := os.Getenv("DISPLAY")
 	if displayVar == "" {
 		return info
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
 	cmd := exec.CommandContext(ctx, "xrandr")
-	cmd.Env = os.Environ()
+	cmd.Env = []string{
+		"DISPLAY=" + displayVar,
+		"PATH=" + os.Getenv("PATH"),
+	}
 	out, err := cmd.Output()
 	if err == nil {
 		for _, line := range strings.Split(string(out), "\n") {
@@ -436,61 +486,50 @@ func GetBattery() *BatteryInfo {
 	if err != nil || len(batteries) == 0 {
 		return &BatteryInfo{}
 	}
-	b := batteries[0]
+
+	var totalCurrent, totalFull float64
+	var statuses []string
+
+	for _, b := range batteries {
+		totalCurrent += b.Current
+		totalFull += b.Full
+		switch b.State.Raw {
+		case battery.Charging:
+			statuses = append(statuses, "Charging")
+		case battery.Discharging:
+			statuses = append(statuses, "Discharging")
+		case battery.Full:
+			statuses = append(statuses, "Full")
+		case battery.Idle:
+			statuses = append(statuses, "AC Connected")
+		}
+	}
+
 	info := &BatteryInfo{}
-	if b.Full > 0 {
-		info.Percentage = int(b.Current / b.Full * 100)
+	if totalFull > 0 {
+		info.Percentage = int(totalCurrent / totalFull * 100)
 	}
-	switch b.State.Raw {
-	case battery.Charging:
-		info.Status = "Charging"
-	case battery.Discharging:
-		info.Status = "Discharging"
-	case battery.Full:
-		info.Status = "Full"
-	case battery.Idle:
-		info.Status = "AC Connected"
+	if len(batteries) == 1 || allSame(statuses) {
+		if len(statuses) > 0 {
+			info.Status = statuses[0]
+		}
+	} else if len(statuses) > 0 {
+		info.Status = statuses[0]
 	}
+
 	return info
 }
 
-func GetLocalIP() *LocalIPInfo {
-	info := &LocalIPInfo{}
-
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return info
+func allSame(ss []string) bool {
+	if len(ss) < 2 {
+		return true
 	}
-
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 {
-			continue
-		}
-		if iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-
-		for _, addr := range addrs {
-			ipnet, ok := addr.(*net.IPNet)
-			if !ok || ipnet.IP.IsLoopback() || ipnet.IP.To4() == nil {
-				continue
-			}
-
-			prefixLen, _ := ipnet.Mask.Size()
-			entry := LocalIPEntry{
-				Name: iface.Name,
-				IP:   fmt.Sprintf("%s/%d", ipnet.IP.String(), prefixLen),
-			}
-			info.Interfaces = append(info.Interfaces, entry)
+	for _, s := range ss[1:] {
+		if s != ss[0] {
+			return false
 		}
 	}
-
-	return info
+	return true
 }
 
 func GetLocale() *LocaleInfo {

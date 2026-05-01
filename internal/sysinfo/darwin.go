@@ -4,8 +4,6 @@ package sysinfo
 
 import (
 	"context"
-	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"strconv"
@@ -22,11 +20,15 @@ import (
 
 func GetOS() *OSInfo {
 	info := &OSInfo{Name: "macOS"}
-	out, err := exec.Command("sw_vers", "-productName").Output()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "sw_vers", "-productName").Output()
 	if err == nil {
 		info.Name = strings.TrimSpace(string(out))
 	}
-	out, err = exec.Command("sw_vers", "-productVersion").Output()
+	out, err = exec.CommandContext(ctx, "sw_vers", "-productVersion").Output()
 	if err == nil {
 		info.Version = strings.TrimSpace(string(out))
 	}
@@ -139,18 +141,6 @@ func GetGPU() []*GPUInfo {
 	return gpus
 }
 
-func GetMemory() *MemoryInfo {
-	v, err := mem.VirtualMemory()
-	if err != nil {
-		return &MemoryInfo{}
-	}
-	return &MemoryInfo{
-		Total:     v.Total,
-		Used:      v.Used,
-		Available: v.Available,
-	}
-}
-
 func GetDisk() []*DiskInfo {
 	partitions, err := disk.Partitions(false)
 	if err != nil {
@@ -198,14 +188,6 @@ func GetDisk() []*DiskInfo {
 	return disks
 }
 
-func GetUptime() *UptimeInfo {
-	u, err := host.Uptime()
-	if err != nil {
-		return &UptimeInfo{}
-	}
-	return &UptimeInfo{Uptime: u}
-}
-
 func GetShell() *ShellInfo {
 	shellPath := os.Getenv("SHELL")
 	if shellPath == "" {
@@ -233,7 +215,7 @@ func GetShell() *ShellInfo {
 	}
 
 	cmd := exec.CommandContext(ctx, info.Name, "-c", versionCmd)
-	cmd.Env = os.Environ()
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
 	out, err := cmd.Output()
 	if err == nil {
 		version := strings.TrimSpace(string(out))
@@ -411,7 +393,7 @@ func GetBattery() *BatteryInfo {
 	b := batteries[0]
 	info := &BatteryInfo{}
 	if b.Full > 0 {
-		info.Percentage = int(b.Current / b.Full * 100)
+		info.Percentage = int(float64(b.Current) / float64(b.Full) * 100)
 	}
 	switch b.State.Raw {
 	case battery.Charging:
@@ -423,45 +405,6 @@ func GetBattery() *BatteryInfo {
 	case battery.Idle:
 		info.Status = "AC Connected"
 	}
-	return info
-}
-
-func GetLocalIP() *LocalIPInfo {
-	info := &LocalIPInfo{}
-
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return info
-	}
-
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 {
-			continue
-		}
-		if iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-
-		for _, addr := range addrs {
-			ipnet, ok := addr.(*net.IPNet)
-			if !ok || ipnet.IP.IsLoopback() || ipnet.IP.To4() == nil {
-				continue
-			}
-
-			prefixLen, _ := ipnet.Mask.Size()
-			entry := LocalIPEntry{
-				Name: iface.Name,
-				IP:   fmt.Sprintf("%s/%d", ipnet.IP.String(), prefixLen),
-			}
-			info.Interfaces = append(info.Interfaces, entry)
-		}
-	}
-
 	return info
 }
 

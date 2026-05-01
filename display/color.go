@@ -1,11 +1,8 @@
 package display
 
-import "fmt"
-
-type Color struct {
-	Code string
-	Name string
-}
+import (
+	"strings"
+)
 
 var Colors = map[string]string{
 	"default":        "\033[0m",
@@ -37,12 +34,20 @@ func GetColor(name string) string {
 }
 
 func Paint(text, colorName string) string {
-	return GetColor(colorName) + text + resetCode
+	var b strings.Builder
+	b.WriteString(GetColor(colorName))
+	b.WriteString(text)
+	b.WriteString(resetCode)
+	return b.String()
 }
 
 func PaintTitle(text, colorName string) string {
-	code := GetColor(colorName)
-	return fmt.Sprintf("\033[1m%s%s%s", code, text, resetCode)
+	var b strings.Builder
+	b.WriteString("\033[1m")
+	b.WriteString(GetColor(colorName))
+	b.WriteString(text)
+	b.WriteString(resetCode)
+	return b.String()
 }
 
 func ColorExists(name string) bool {

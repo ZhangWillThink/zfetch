@@ -21,9 +21,9 @@ func (m *SwapModule) Run() []ModuleInfo {
 		return nil
 	}
 
-	usedGiB := float64(info.Used) / (1024 * 1024 * 1024)
-	totalGiB := float64(info.Total) / (1024 * 1024 * 1024)
-	pct := math.Round(float64(info.Used) / float64(info.Total) * 100)
+	usedGiB := float64(info.Used) / bytesPerGiB
+	totalGiB := float64(info.Total) / bytesPerGiB
+	pct := math.Round(clampPercent(float64(info.Used) / float64(info.Total) * 100))
 
 	return []ModuleInfo{{
 		Key:          "Swap",

@@ -22,7 +22,11 @@ func Run() error {
 	fmt.Print("Continue? [y/N] ")
 
 	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		fmt.Println("Cancelled.")
+		return nil
+	}
 	input = strings.TrimSpace(strings.ToLower(input))
 
 	if input != "y" && input != "yes" {

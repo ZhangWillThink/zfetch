@@ -8,8 +8,6 @@ import (
 	"github.com/muhammadmuzzammil1998/jsonc"
 )
 
-type ModuleOptions map[string]interface{}
-
 type Config struct {
 	Structure  string                   `json:"structure"`
 	Logo       string                   `json:"logo,omitempty"`
@@ -17,7 +15,7 @@ type Config struct {
 	ColorKeys  string                   `json:"colorKeys"`
 	ColorTitle string                   `json:"colorTitle"`
 	Pipe       bool                     `json:"pipe"`
-	Modules    map[string]ModuleOptions `json:"modules,omitempty"`
+	Modules    map[string]interface{}   `json:"modules,omitempty"`
 }
 
 func DefaultConfig() *Config {
@@ -44,9 +42,10 @@ func LoadFromFile(path string) (*Config, error) {
 }
 
 func FindPreset(name string) (string, error) {
-	searchPaths := []string{
-		name,
-		filepath.Join(name),
+	var searchPaths []string
+
+	if filepath.IsAbs(name) || (len(name) > 2 && name[0] == '.' && os.IsPathSeparator(name[1])) {
+		searchPaths = append(searchPaths, name)
 	}
 
 	homeDir, err := os.UserHomeDir()
@@ -56,6 +55,15 @@ func FindPreset(name string) (string, error) {
 			filepath.Join(homeDir, ".config", "zfetch", name),
 			filepath.Join(homeDir, ".local", "share", "zfetch", "presets", name+".jsonc"),
 			filepath.Join(homeDir, ".local", "share", "zfetch", "presets", name),
+		)
+	}
+
+	exe, err := os.Executable()
+	if err == nil {
+		exeDir := filepath.Dir(exe)
+		searchPaths = append(searchPaths,
+			filepath.Join(exeDir, "presets", name+".jsonc"),
+			filepath.Join(exeDir, "presets", name),
 		)
 	}
 

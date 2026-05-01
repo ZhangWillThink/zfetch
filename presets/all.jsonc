@@ -1,6 +1,6 @@
 {
-  "structure": "title:separator:os:kernel:uptime:packages:shell:resolution:de:wm:terminal:cpu:gpu:memory:disk",
-  "separator": "~",
-  "colorKeys": "green",
-  "colorTitle": "bright_green"
+  "structure": "title:separator:os:kernel:uptime:packages:shell:resolution:de:wm:terminal:cpu:gpu:memory:swap:disk:host:battery:localip:locale",
+  "separator": " → ",
+  "colorKeys": "cyan",
+  "colorTitle": "bright_cyan"
 }

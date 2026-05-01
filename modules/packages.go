@@ -20,6 +20,11 @@ func (m *PackagesModule) Run() []ModuleInfo {
 	if info.Count == 0 {
 		return []ModuleInfo{{Key: "Packages", Value: "Unknown"}}
 	}
-	val := fmt.Sprintf("%d (%s)", info.Count, strings.Join(info.Managers, ", "))
+	var val string
+	if len(info.Managers) > 0 {
+		val = fmt.Sprintf("%d (%s)", info.Count, strings.Join(info.Managers, ", "))
+	} else {
+		val = fmt.Sprintf("%d", info.Count)
+	}
 	return []ModuleInfo{{Key: "Packages", Value: val}}
 }

@@ -3,7 +3,9 @@ package display
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
+	"sync"
 
 	"github.com/mattn/go-runewidth"
 	"golang.org/x/term"
@@ -13,18 +15,28 @@ import (
 )
 
 type Display struct {
-	cfg  *config.Config
-	pipe bool
+	cfg       *config.Config
+	pipe      bool
+	termWidth int
 }
 
 func New(cfg *config.Config, pipe bool) *Display {
-	if cfg.ColorKeys == "default" {
-		cfg.ColorKeys = "bright_green"
+	if cfg == nil {
+		cfg = config.DefaultConfig()
 	}
-	if cfg.ColorTitle == "default" {
-		cfg.ColorTitle = "bright_white"
+	ccfg := *cfg
+	if ccfg.ColorKeys == "default" {
+		ccfg.ColorKeys = "bright_green"
 	}
-	return &Display{cfg: cfg, pipe: pipe}
+	if ccfg.ColorTitle == "default" {
+		ccfg.ColorTitle = "bright_white"
+	}
+	return &Display{cfg: &ccfg, pipe: pipe, termWidth: getTerminalWidth()}
+}
+
+type indexedResult struct {
+	idx  int
+	info []modules.ModuleInfo
 }
 
 func (d *Display) Render() {
@@ -35,9 +47,13 @@ func (d *Display) Render() {
 		return
 	}
 
-	var lineInfos []modules.ModuleInfo
+	var (
+		lineInfos = make([]modules.ModuleInfo, 0, len(moduleKeys))
+		resultsCh = make(chan indexedResult, len(moduleKeys))
+		wg        sync.WaitGroup
+	)
 
-	for _, key := range moduleKeys {
+	for idx, key := range moduleKeys {
 		key = strings.TrimSpace(key)
 		if key == "" {
 			continue
@@ -54,8 +70,25 @@ func (d *Display) Render() {
 			continue
 		}
 
-		results := m.Run()
-		lineInfos = append(lineInfos, results...)
+		wg.Add(1)
+		go func(i int, mod modules.Module) {
+			defer wg.Done()
+			resultsCh <- indexedResult{idx: i, info: mod.Run()}
+		}(idx, m)
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
+
+	var results []indexedResult
+	for r := range resultsCh {
+		results = append(results, r)
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].idx < results[j].idx })
+	for _, r := range results {
+		lineInfos = append(lineInfos, r.info...)
 	}
 
 	if d.pipe {
@@ -82,8 +115,10 @@ func (d *Display) renderPipe(infos []modules.ModuleInfo) {
 func (d *Display) renderWithLogo(infos []modules.ModuleInfo) {
 	keyColor := d.cfg.ColorKeys
 	titleColor := d.cfg.ColorTitle
+	sepLen := runewidth.StringWidth(d.cfg.Separator)
 
 	maxKeyWidth := 0
+	longestRight := 40
 	for _, info := range infos {
 		if info.Key == "" || info.Key == "separator" {
 			continue
@@ -91,14 +126,6 @@ func (d *Display) renderWithLogo(infos []modules.ModuleInfo) {
 		w := runewidth.StringWidth(info.Key)
 		if w > maxKeyWidth {
 			maxKeyWidth = w
-		}
-	}
-
-	sepLen := runewidth.StringWidth(d.cfg.Separator)
-	longestRight := 40
-	for _, info := range infos {
-		if info.Key == "" || info.Key == "separator" {
-			continue
 		}
 		var lineW int
 		if info.Value == "" {
@@ -131,8 +158,7 @@ func (d *Display) renderWithLogo(infos []modules.ModuleInfo) {
 	logoWidth += 3
 	totalWidth := logoWidth + 2 + longestRight
 
-	termWidth := getTerminalWidth()
-	if termWidth > 0 && totalWidth > termWidth {
+	if d.termWidth > 0 && totalWidth > d.termWidth {
 		d.renderInline(infos)
 		return
 	}
@@ -166,7 +192,7 @@ func (d *Display) renderWithLogo(infos []modules.ModuleInfo) {
 		if i < len(infos) {
 			info := infos[i]
 			if info.Key == "separator" {
-				right = strings.Repeat("─", 40)
+				right = strings.Repeat("─", longestRight)
 			} else if info.Value == "" {
 				pk := runewidth.FillRight(info.Key, maxKeyWidth)
 				right = pk
@@ -224,13 +250,12 @@ func (d *Display) renderInline(infos []modules.ModuleInfo) {
 
 	keyColor := d.cfg.ColorKeys
 	titleColor := d.cfg.ColorTitle
-	termWidth := getTerminalWidth()
 
 	for i, info := range infos {
 		if info.Key == "separator" {
 			sepLine := strings.Repeat("─", 40)
-			if termWidth > 0 && 40 > termWidth {
-				sepLine = strings.Repeat("─", termWidth)
+			if d.termWidth > 0 && 40 > d.termWidth {
+				sepLine = strings.Repeat("─", d.termWidth)
 			}
 			fmt.Println(Paint(sepLine, keyColor))
 			continue
@@ -245,8 +270,8 @@ func (d *Display) renderInline(infos []modules.ModuleInfo) {
 		}
 
 		lineWidth := runewidth.StringWidth(right)
-		if termWidth > 0 && lineWidth > termWidth {
-			truncateAt := termWidth - 3
+		if d.termWidth > 0 && lineWidth > d.termWidth {
+			truncateAt := d.termWidth - 3
 			if truncateAt < 1 {
 				truncateAt = 1
 			}
@@ -269,7 +294,7 @@ func (d *Display) renderInline(infos []modules.ModuleInfo) {
 	}
 }
 
-func splitColored(right string, keyWidth int, color string, isTitle bool) (coloredKey string, rest string) {
+func splitColored(right string, _ int, color string, isTitle bool) (coloredKey string, rest string) {
 	key, after, found := strings.Cut(right, " ")
 	if !found {
 		if isTitle {
@@ -285,6 +310,8 @@ func splitColored(right string, keyWidth int, color string, isTitle bool) (color
 
 func usageColor(percent float64) string {
 	switch {
+	case percent <= 0:
+		return "default"
 	case percent >= 85:
 		return "bright_red"
 	case percent >= 60:

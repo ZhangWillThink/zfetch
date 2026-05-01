@@ -4,8 +4,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"path/filepath"
 	"runtime"
 	"sort"
+	"syscall"
 
 	"golang.org/x/term"
 
@@ -13,6 +16,7 @@ import (
 	"github.com/WillZhang/zfetch/display"
 	"github.com/WillZhang/zfetch/internal/uninstall"
 	"github.com/WillZhang/zfetch/internal/upgrade"
+	"github.com/WillZhang/zfetch/modules"
 	_ "github.com/WillZhang/zfetch/modules"
 )
 
@@ -57,6 +61,13 @@ func main() {
 
 	flag.Parse()
 
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		os.Exit(1)
+	}()
+
 	if flag.Arg(0) == "upgrade" {
 		if err := upgrade.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -84,10 +95,10 @@ func main() {
 	}
 
 	if listModules {
-		modules := getAllModules()
-		sort.Strings(modules)
+		names := modules.AllModules()
+		sort.Strings(names)
 		fmt.Println("Available modules:")
-		for _, m := range modules {
+		for _, m := range names {
 			fmt.Printf("  %s\n", m)
 		}
 		return
@@ -125,7 +136,24 @@ func main() {
 
 	if genConfig {
 		cfgPath := config.FindDefaultConfig()
-		fmt.Printf("Would generate config at: %s\n", cfgPath)
+		if cfgPath == "" {
+			fmt.Fprintf(os.Stderr, "Error: cannot determine home directory\n")
+			os.Exit(1)
+		}
+		if _, err := os.Stat(cfgPath); err == nil {
+			fmt.Fprintf(os.Stderr, "Config already exists at %s\n", cfgPath)
+			os.Exit(1)
+		}
+		dir := filepath.Dir(cfgPath)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating config directory: %v\n", err)
+			os.Exit(1)
+		}
+		if err := os.WriteFile(cfgPath, []byte(defaultConfigContent), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing config: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Config generated at: %s\n", cfgPath)
 		return
 	}
 
@@ -175,14 +203,21 @@ func main() {
 	d.Render()
 }
 
-func getAllModules() []string {
-	modules := []string{
-		"title", "separator", "os", "kernel", "uptime", "packages",
-		"shell", "resolution", "de", "wm", "terminal", "cpu", "gpu",
-		"memory", "swap", "disk", "host", "battery", "localip", "locale",
-	}
-	return modules
+const defaultConfigContent = `{
+  // zfetch configuration file (JSONC format - JSON with comments)
+  // Available modules: title, separator, os, kernel, uptime, packages,
+  //   shell, resolution, de, wm, terminal, cpu, gpu, memory, swap,
+  //   disk, host, battery, localip, locale
+  "structure": "title:separator:os:kernel:uptime:packages:shell:resolution:de:wm:terminal:cpu:gpu:memory:swap:disk:host:battery:localip:locale",
+  // "=" or "~" or ": " or " → "
+  "separator": ": ",
+  // Available colors: black, red, green, yellow, blue, magenta, cyan, white,
+  //   bright_black, bright_red, bright_green, bright_yellow,
+  //   bright_blue, bright_magenta, bright_cyan, bright_white
+  "colorKeys": "default",
+  "colorTitle": "default"
 }
+`
 
 func printHelp() {
 	fmt.Print(`zfetch - A fast and feature-rich system information tool
@@ -217,6 +252,6 @@ Structure example:
   zfetch -s "title:separator:os:kernel:uptime:shell:cpu:memory:disk"
 
 Config files use JSONC format (JSON with comments).
-Place config at ~/.config/zfetch/config.jsonc
+Generate a default config with: zfetch --gen-config
 `)
 }

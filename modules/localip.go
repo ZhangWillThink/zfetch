@@ -1,6 +1,8 @@
 package modules
 
 import (
+	"fmt"
+
 	"github.com/WillZhang/zfetch/internal/sysinfo"
 )
 
@@ -22,10 +24,10 @@ func (m *LocalIPModule) Run() []ModuleInfo {
 	for i, entry := range info.Interfaces {
 		key := "Local IP"
 		if i > 0 {
-			key = ""
+			key = fmt.Sprintf("Local IP (%s)", entry.Name)
 		}
 		value := entry.IP
-		if entry.Name != "" {
+		if entry.Name != "" && i == 0 {
 			value = entry.IP + " (" + entry.Name + ")"
 		}
 		result = append(result, ModuleInfo{Key: key, Value: value})

@@ -1,5 +1,10 @@
 package modules
 
+const (
+	bytesPerMiB = 1024 * 1024
+	bytesPerGiB = 1024 * 1024 * 1024
+)
+
 type ModuleInfo struct {
 	Key          string
 	Value        string
@@ -9,11 +14,6 @@ type ModuleInfo struct {
 type Module interface {
 	Name() string
 	Run() []ModuleInfo
-}
-
-type CategorizedModule struct {
-	Category string
-	Modules  []ModuleInfo
 }
 
 var registry = make(map[string]Module)
@@ -32,4 +32,14 @@ func AllModules() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+func clampPercent(pct float64) float64 {
+	if pct < 0 {
+		return 0
+	}
+	if pct > 100 {
+		return 100
+	}
+	return pct
 }
