@@ -3,9 +3,16 @@
 package sysinfo
 
 import (
+	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/disk"
+	"github.com/shirou/gopsutil/v4/host"
+	"github.com/shirou/gopsutil/v4/mem"
 )
 
 func GetOS() *OSInfo {
@@ -19,25 +26,36 @@ func GetOS() *OSInfo {
 }
 
 func GetKernel() *KernelInfo {
-	info := &KernelInfo{Name: "Windows NT"}
-	out, err := exec.Command("cmd", "/c", "ver").Output()
-	if err == nil {
-		info.Release = strings.TrimSpace(string(out))
+	h, err := host.Info()
+	if err != nil {
+		return &KernelInfo{Name: "Windows NT"}
 	}
-	return info
+	return &KernelInfo{
+		Name:    "Windows NT",
+		Release: h.KernelVersion,
+		Machine: h.KernelArch,
+	}
 }
 
 func GetCPU() *CPUInfo {
-	info := &CPUInfo{}
-	out, err := exec.Command("wmic", "cpu", "get", "name").Output()
-	if err == nil {
-		lines := strings.Split(string(out), "\n")
-		if len(lines) > 1 {
-			info.Name = strings.TrimSpace(lines[1])
-		}
-	}
-	if info.Name == "" {
+	cpus, err := cpu.Info()
+	if err != nil || len(cpus) == 0 {
+		info := &CPUInfo{}
 		info.Name = os.Getenv("PROCESSOR_IDENTIFIER")
+		if info.Name == "" {
+			info.Name = "Unknown"
+		}
+		return info
+	}
+	physicalCores, _ := cpu.Counts(false)
+	info := &CPUInfo{
+		Name:   cpus[0].ModelName,
+		MaxMHz: cpus[0].Mhz,
+	}
+	if physicalCores > 0 {
+		info.Cores = physicalCores
+	} else {
+		info.Cores = len(cpus)
 	}
 	return info
 }
@@ -58,15 +76,58 @@ func GetGPU() []*GPUInfo {
 }
 
 func GetMemory() *MemoryInfo {
-	return &MemoryInfo{}
+	v, err := mem.VirtualMemory()
+	if err != nil {
+		return &MemoryInfo{}
+	}
+	return &MemoryInfo{
+		Total:     v.Total,
+		Used:      v.Used,
+		Available: v.Available,
+	}
 }
 
 func GetDisk() []*DiskInfo {
-	return []*DiskInfo{{Path: "C:\\"}}
+	partitions, err := disk.Partitions(false)
+	if err != nil {
+		return []*DiskInfo{{Path: "C:\\"}}
+	}
+
+	var disks []*DiskInfo
+	seen := map[string]bool{}
+
+	for _, p := range partitions {
+		if seen[p.Mountpoint] {
+			continue
+		}
+		seen[p.Mountpoint] = true
+
+		usage, err := disk.Usage(p.Mountpoint)
+		if err != nil || usage.Total == 0 {
+			continue
+		}
+
+		disks = append(disks, &DiskInfo{
+			Path:       p.Mountpoint,
+			Total:      usage.Total,
+			Used:       usage.Used,
+			Available:  usage.Free,
+			Filesystem: p.Fstype,
+		})
+	}
+
+	if len(disks) == 0 {
+		disks = append(disks, &DiskInfo{Path: "C:\\"})
+	}
+	return disks
 }
 
 func GetUptime() *UptimeInfo {
-	return &UptimeInfo{}
+	u, err := host.Uptime()
+	if err != nil {
+		return &UptimeInfo{}
+	}
+	return &UptimeInfo{Uptime: u}
 }
 
 func GetShell() *ShellInfo {
@@ -106,7 +167,14 @@ func GetHost() *HostInfo {
 }
 
 func GetSwap() *SwapInfo {
-	return &SwapInfo{}
+	s, err := mem.SwapMemory()
+	if err != nil {
+		return &SwapInfo{}
+	}
+	return &SwapInfo{
+		Total: s.Total,
+		Used:  s.Used,
+	}
 }
 
 func GetBattery() *BatteryInfo {
@@ -114,7 +182,42 @@ func GetBattery() *BatteryInfo {
 }
 
 func GetLocalIP() *LocalIPInfo {
-	return &LocalIPInfo{}
+	info := &LocalIPInfo{}
+
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return info
+	}
+
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			ipnet, ok := addr.(*net.IPNet)
+			if !ok || ipnet.IP.IsLoopback() || ipnet.IP.To4() == nil {
+				continue
+			}
+
+			prefixLen, _ := ipnet.Mask.Size()
+			entry := LocalIPEntry{
+				Name: iface.Name,
+				IP:   fmt.Sprintf("%s/%d", ipnet.IP.String(), prefixLen),
+			}
+			info.Interfaces = append(info.Interfaces, entry)
+		}
+	}
+
+	return info
 }
 
 func GetLocale() *LocaleInfo {

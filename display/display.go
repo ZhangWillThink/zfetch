@@ -2,8 +2,11 @@ package display
 
 import (
 	"fmt"
+	"os"
 	"strings"
-	"unicode/utf8"
+
+	"github.com/mattn/go-runewidth"
+	"golang.org/x/term"
 
 	"github.com/WillZhang/zfetch/config"
 	"github.com/WillZhang/zfetch/modules"
@@ -77,18 +80,6 @@ func (d *Display) renderPipe(infos []modules.ModuleInfo) {
 }
 
 func (d *Display) renderWithLogo(infos []modules.ModuleInfo) {
-	logoName := d.cfg.Logo
-	if logoName == "" {
-		logoName = detectOSLogo()
-	}
-
-	logo := GetLogo(logoName)
-	if len(logo) == 0 {
-		d.renderPipe(infos)
-		return
-	}
-	logoWidth := maxRuneWidth(logo) + 3
-
 	keyColor := d.cfg.ColorKeys
 	titleColor := d.cfg.ColorTitle
 
@@ -97,10 +88,53 @@ func (d *Display) renderWithLogo(infos []modules.ModuleInfo) {
 		if info.Key == "" || info.Key == "separator" {
 			continue
 		}
-		w := utf8.RuneCountInString(info.Key)
+		w := runewidth.StringWidth(info.Key)
 		if w > maxKeyWidth {
 			maxKeyWidth = w
 		}
+	}
+
+	sepLen := runewidth.StringWidth(d.cfg.Separator)
+	longestRight := 40
+	for _, info := range infos {
+		if info.Key == "" || info.Key == "separator" {
+			continue
+		}
+		var lineW int
+		if info.Value == "" {
+			lineW = maxKeyWidth
+		} else {
+			lineW = maxKeyWidth + 1 + sepLen + 1 + runewidth.StringWidth(info.Value)
+		}
+		if lineW > longestRight {
+			longestRight = lineW
+		}
+	}
+
+	logoName := d.cfg.Logo
+	if logoName == "" {
+		logoName = detectOSLogo()
+	}
+
+	logo := GetLogo(logoName)
+	if len(logo) == 0 {
+		d.renderInline(infos)
+		return
+	}
+
+	logoWidth := 0
+	for _, l := range logo {
+		if w := runewidth.StringWidth(l); w > logoWidth {
+			logoWidth = w
+		}
+	}
+	logoWidth += 3
+	totalWidth := logoWidth + 2 + longestRight
+
+	termWidth := getTerminalWidth()
+	if termWidth > 0 && totalWidth > termWidth {
+		d.renderInline(infos)
+		return
 	}
 
 	type row struct {
@@ -118,7 +152,7 @@ func (d *Display) renderWithLogo(infos []modules.ModuleInfo) {
 	for i := 0; i < n; i++ {
 		var left string
 		if i < len(logo) {
-			pad := logoWidth - runeWidth(logo[i])
+			pad := logoWidth - runewidth.StringWidth(logo[i])
 			if pad > 0 {
 				left = logo[i] + strings.Repeat(" ", pad)
 			} else {
@@ -134,10 +168,10 @@ func (d *Display) renderWithLogo(infos []modules.ModuleInfo) {
 			if info.Key == "separator" {
 				right = strings.Repeat("─", 40)
 			} else if info.Value == "" {
-				pk := padRunes(info.Key, maxKeyWidth)
+				pk := runewidth.FillRight(info.Key, maxKeyWidth)
 				right = pk
 			} else {
-				pk := padRunes(info.Key, maxKeyWidth)
+				pk := runewidth.FillRight(info.Key, maxKeyWidth)
 				right = pk + " " + d.cfg.Separator + " " + info.Value
 			}
 		}
@@ -176,6 +210,65 @@ func (d *Display) renderWithLogo(infos []modules.ModuleInfo) {
 	}
 }
 
+func (d *Display) renderInline(infos []modules.ModuleInfo) {
+	maxKeyWidth := 0
+	for _, info := range infos {
+		if info.Key == "" || info.Key == "separator" {
+			continue
+		}
+		w := runewidth.StringWidth(info.Key)
+		if w > maxKeyWidth {
+			maxKeyWidth = w
+		}
+	}
+
+	keyColor := d.cfg.ColorKeys
+	titleColor := d.cfg.ColorTitle
+	termWidth := getTerminalWidth()
+
+	for i, info := range infos {
+		if info.Key == "separator" {
+			sepLine := strings.Repeat("─", 40)
+			if termWidth > 0 && 40 > termWidth {
+				sepLine = strings.Repeat("─", termWidth)
+			}
+			fmt.Println(Paint(sepLine, keyColor))
+			continue
+		}
+
+		var right string
+		if info.Value == "" {
+			right = runewidth.FillRight(info.Key, maxKeyWidth)
+		} else {
+			pk := runewidth.FillRight(info.Key, maxKeyWidth)
+			right = pk + " " + d.cfg.Separator + " " + info.Value
+		}
+
+		lineWidth := runewidth.StringWidth(right)
+		if termWidth > 0 && lineWidth > termWidth {
+			truncateAt := termWidth - 3
+			if truncateAt < 1 {
+				truncateAt = 1
+			}
+			right = runewidth.Truncate(right, truncateAt, "...")
+		}
+
+		isTitle := i == 0 && info.Value == ""
+		if isTitle {
+			fmt.Println(PaintTitle(right, titleColor))
+		} else {
+			coloredKey, rest := splitColored(right, maxKeyWidth, keyColor, false)
+			fmt.Print(coloredKey)
+			if info.UsagePercent > 0 {
+				fmt.Print(Paint(rest, usageColor(info.UsagePercent)))
+			} else {
+				fmt.Print(rest)
+			}
+			fmt.Println()
+		}
+	}
+}
+
 func splitColored(right string, keyWidth int, color string, isTitle bool) (coloredKey string, rest string) {
 	key, after, found := strings.Cut(right, " ")
 	if !found {
@@ -190,21 +283,6 @@ func splitColored(right string, keyWidth int, color string, isTitle bool) (color
 	return Paint(key, color), " " + after
 }
 
-func runeWidth(s string) int {
-	return utf8.RuneCountInString(s)
-}
-
-func maxRuneWidth(lines []string) int {
-	m := 0
-	for _, l := range lines {
-		w := runeWidth(l)
-		if w > m {
-			m = w
-		}
-	}
-	return m
-}
-
 func usageColor(percent float64) string {
 	switch {
 	case percent >= 85:
@@ -216,10 +294,10 @@ func usageColor(percent float64) string {
 	}
 }
 
-func padRunes(s string, width int) string {
-	cur := utf8.RuneCountInString(s)
-	if cur >= width {
-		return s
+func getTerminalWidth() int {
+	w, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil {
+		return 0
 	}
-	return s + strings.Repeat(" ", width-cur)
+	return w
 }

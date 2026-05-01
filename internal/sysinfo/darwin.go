@@ -12,6 +12,12 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/distatus/battery"
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/disk"
+	"github.com/shirou/gopsutil/v4/host"
+	"github.com/shirou/gopsutil/v4/mem"
 )
 
 func GetOS() *OSInfo {
@@ -29,39 +35,31 @@ func GetOS() *OSInfo {
 }
 
 func GetKernel() *KernelInfo {
-	info := &KernelInfo{Name: "Darwin"}
-	out, err := exec.Command("uname", "-s").Output()
-	if err == nil {
-		info.Name = strings.TrimSpace(string(out))
+	h, err := host.Info()
+	if err != nil {
+		return &KernelInfo{Name: "Darwin"}
 	}
-	out, err = exec.Command("uname", "-r").Output()
-	if err == nil {
-		info.Release = strings.TrimSpace(string(out))
+	return &KernelInfo{
+		Name:    "Darwin",
+		Release: h.KernelVersion,
+		Machine: h.KernelArch,
 	}
-	out, err = exec.Command("uname", "-v").Output()
-	if err == nil {
-		info.Version = strings.TrimSpace(string(out))
-	}
-	out, err = exec.Command("uname", "-m").Output()
-	if err == nil {
-		info.Machine = strings.TrimSpace(string(out))
-	}
-	return info
 }
 
 func GetCPU() *CPUInfo {
-	info := &CPUInfo{}
-	out, err := exec.Command("sysctl", "-n", "machdep.cpu.brand_string").Output()
-	if err == nil {
-		info.Name = strings.TrimSpace(string(out))
+	cpus, err := cpu.Info()
+	if err != nil || len(cpus) == 0 {
+		return &CPUInfo{Name: "Unknown"}
 	}
-	out, err = exec.Command("sysctl", "-n", "hw.logicalcpu").Output()
-	if err == nil {
-		cores, _ := strconv.Atoi(strings.TrimSpace(string(out)))
-		info.Cores = cores
+	physicalCores, _ := cpu.Counts(false)
+	info := &CPUInfo{
+		Name:   cpus[0].ModelName,
+		MaxMHz: cpus[0].Mhz,
 	}
-	if info.Name == "" {
-		info.Name = "Unknown"
+	if physicalCores > 0 {
+		info.Cores = physicalCores
+	} else {
+		info.Cores = len(cpus)
 	}
 	return info
 }
@@ -142,105 +140,43 @@ func GetGPU() []*GPUInfo {
 }
 
 func GetMemory() *MemoryInfo {
-	info := &MemoryInfo{}
-
-	out, err := exec.Command("sysctl", "-n", "hw.memsize").Output()
-	if err == nil {
-		total, _ := strconv.ParseUint(strings.TrimSpace(string(out)), 10, 64)
-		info.Total = total
+	v, err := mem.VirtualMemory()
+	if err != nil {
+		return &MemoryInfo{}
 	}
-
-	out, err = exec.Command("vm_stat").Output()
-	if err == nil {
-		var pageSize uint64 = 16384
-		var freePages, inactivePages, wiredPages, activePages uint64
-
-		for _, line := range strings.Split(string(out), "\n") {
-			line = strings.TrimSpace(line)
-
-			if strings.HasPrefix(line, "Mach Virtual Memory Statistics") {
-				if idx := strings.Index(line, "page size of"); idx != -1 {
-					rest := line[idx+len("page size of"):]
-					rest = strings.TrimSpace(rest)
-					rest = strings.TrimSuffix(rest, "bytes)")
-					rest = strings.TrimSpace(rest)
-					ps, _ := strconv.ParseUint(rest, 10, 64)
-					if ps > 0 {
-						pageSize = ps
-					}
-				}
-				continue
-			}
-
-			parts := strings.Split(line, ":")
-			if len(parts) != 2 {
-				continue
-			}
-			key := strings.TrimSpace(parts[0])
-			value := strings.TrimSpace(parts[1])
-			value = strings.TrimRight(value, ".")
-
-			switch key {
-			case "Pages free":
-				freePages, _ = strconv.ParseUint(value, 10, 64)
-			case "Pages inactive":
-				inactivePages, _ = strconv.ParseUint(value, 10, 64)
-			case "Pages wired down":
-				wiredPages, _ = strconv.ParseUint(value, 10, 64)
-			case "Pages active":
-				activePages, _ = strconv.ParseUint(value, 10, 64)
-			}
-		}
-
-		if info.Total > 0 {
-			available := (freePages + inactivePages) * pageSize
-			used := (activePages + wiredPages) * pageSize
-			info.Used = used
-			info.Available = available
-		}
+	return &MemoryInfo{
+		Total:     v.Total,
+		Used:      v.Used,
+		Available: v.Available,
 	}
-
-	return info
 }
 
 func GetDisk() []*DiskInfo {
-	var disks []*DiskInfo
-
-	out, err := exec.Command("df", "-k").Output()
+	partitions, err := disk.Partitions(false)
 	if err != nil {
-		return disks
+		return nil
 	}
 
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 6 {
+	var disks []*DiskInfo
+	seen := map[string]bool{}
+
+	for _, p := range partitions {
+		if seen[p.Mountpoint] {
 			continue
 		}
+		seen[p.Mountpoint] = true
 
-		device := fields[0]
-		mountpoint := fields[len(fields)-1]
-
-		if !strings.HasPrefix(device, "/dev/") {
-			continue
-		}
-
-		var stat syscall.Statfs_t
-		if err := syscall.Statfs(mountpoint, &stat); err != nil {
-			continue
-		}
-
-		total := stat.Blocks * uint64(stat.Bsize)
-		available := stat.Bavail * uint64(stat.Bsize)
-		if total == 0 {
+		usage, err := disk.Usage(p.Mountpoint)
+		if err != nil || usage.Total == 0 {
 			continue
 		}
 
 		disks = append(disks, &DiskInfo{
-			Path:       mountpoint,
-			Total:      total,
-			Used:       total - available,
-			Available:  available,
-			Filesystem: fields[1],
+			Path:       p.Mountpoint,
+			Total:      usage.Total,
+			Used:       usage.Used,
+			Available:  usage.Free,
+			Filesystem: p.Fstype,
 		})
 	}
 
@@ -263,27 +199,11 @@ func GetDisk() []*DiskInfo {
 }
 
 func GetUptime() *UptimeInfo {
-	info := &UptimeInfo{}
-
-	out, err := exec.Command("sysctl", "-n", "kern.boottime").Output()
-	if err == nil {
-		line := strings.TrimSpace(string(out))
-		parts := strings.Split(line, ",")
-		for _, part := range parts {
-			part = strings.TrimSpace(part)
-			if strings.HasPrefix(part, "sec = ") {
-				secStr := strings.TrimPrefix(part, "sec = ")
-				bootSec, parseErr := strconv.ParseInt(secStr, 10, 64)
-				if parseErr == nil {
-					now := time.Now().Unix()
-					info.Uptime = uint64(now - bootSec)
-				}
-				break
-			}
-		}
+	u, err := host.Uptime()
+	if err != nil {
+		return &UptimeInfo{}
 	}
-
-	return info
+	return &UptimeInfo{Uptime: u}
 }
 
 func GetShell() *ShellInfo {
@@ -473,67 +393,36 @@ func GetHost() *HostInfo {
 }
 
 func GetSwap() *SwapInfo {
-	info := &SwapInfo{}
-
-	out, err := exec.Command("sysctl", "-n", "vm.swapusage").Output()
-	if err == nil {
-		line := strings.TrimSpace(string(out))
-		parts := strings.Fields(line)
-		for i, p := range parts {
-			if p == "total" && i+2 < len(parts) {
-				totalStr := strings.TrimSuffix(parts[i+2], "M")
-				total, _ := strconv.ParseFloat(strings.TrimSuffix(totalStr, ".00"), 64)
-				info.Total = uint64(total * 1024 * 1024)
-			}
-			if p == "used" && i+2 < len(parts) {
-				usedStr := strings.TrimSuffix(parts[i+2], "M")
-				used, _ := strconv.ParseFloat(strings.TrimSuffix(usedStr, ".00"), 64)
-				info.Used = uint64(used * 1024 * 1024)
-			}
-		}
+	s, err := mem.SwapMemory()
+	if err != nil {
+		return &SwapInfo{}
 	}
-
-	return info
+	return &SwapInfo{
+		Total: s.Total,
+		Used:  s.Used,
+	}
 }
 
 func GetBattery() *BatteryInfo {
+	batteries, err := battery.GetAll()
+	if err != nil || len(batteries) == 0 {
+		return &BatteryInfo{}
+	}
+	b := batteries[0]
 	info := &BatteryInfo{}
-
-	out, err := exec.Command("pmset", "-g", "batt").Output()
-	if err != nil {
-		return info
+	if b.Full > 0 {
+		info.Percentage = int(b.Current / b.Full * 100)
 	}
-
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.Contains(line, "%") {
-			pctStr := ""
-			for i, c := range line {
-				if c == '%' {
-					for j := i - 1; j >= 0 && line[j] >= '0' && line[j] <= '9'; j-- {
-						pctStr = string(line[j]) + pctStr
-					}
-					break
-				}
-			}
-			if pctStr != "" {
-				info.Percentage, _ = strconv.Atoi(pctStr)
-			}
-
-			lower := strings.ToLower(line)
-			if strings.Contains(lower, "charging") {
-				info.Status = "Charging"
-			} else if strings.Contains(lower, "discharging") {
-				info.Status = "Discharging"
-			} else if strings.Contains(lower, "charged") || strings.Contains(lower, "full") {
-				info.Status = "Full"
-			} else if strings.Contains(lower, "ac") {
-				info.Status = "AC Connected"
-			}
-			break
-		}
+	switch b.State.Raw {
+	case battery.Charging:
+		info.Status = "Charging"
+	case battery.Discharging:
+		info.Status = "Discharging"
+	case battery.Full:
+		info.Status = "Full"
+	case battery.Idle:
+		info.Status = "AC Connected"
 	}
-
 	return info
 }
 

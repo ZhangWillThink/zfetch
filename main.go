@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"sort"
 
+	"golang.org/x/term"
+
 	"github.com/WillZhang/zfetch/config"
 	"github.com/WillZhang/zfetch/display"
 	"github.com/WillZhang/zfetch/internal/uninstall"
@@ -167,18 +169,10 @@ func main() {
 		cfg.Pipe = true
 	}
 
-	pipedOutput := cfg.Pipe || !isTerminal()
+	pipedOutput := cfg.Pipe || !term.IsTerminal(int(os.Stdout.Fd()))
 
 	d := display.New(cfg, pipedOutput)
 	d.Render()
-}
-
-func isTerminal() bool {
-	stat, err := os.Stdout.Stat()
-	if err != nil {
-		return false
-	}
-	return (stat.Mode() & os.ModeCharDevice) != 0
 }
 
 func getAllModules() []string {

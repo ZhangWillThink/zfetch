@@ -3,7 +3,6 @@
 package sysinfo
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"net"
@@ -12,8 +11,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/distatus/battery"
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/disk"
+	"github.com/shirou/gopsutil/v4/host"
+	"github.com/shirou/gopsutil/v4/mem"
 )
 
 func GetOS() *OSInfo {
@@ -55,71 +59,32 @@ func GetOS() *OSInfo {
 }
 
 func GetKernel() *KernelInfo {
-	var uts syscall.Utsname
-	if err := syscall.Uname(&uts); err != nil {
+	h, err := host.Info()
+	if err != nil {
 		return &KernelInfo{Name: "Linux"}
 	}
-
-	b2s := func(b [65]int8) string {
-		n := 0
-		for n < len(b) && b[n] != 0 {
-			n++
-		}
-		bytes := make([]byte, n)
-		for i := 0; i < n; i++ {
-			bytes[i] = byte(b[i])
-		}
-		return string(bytes)
-	}
-
 	return &KernelInfo{
-		Name:    b2s(uts.Sysname),
-		Release: b2s(uts.Release),
-		Version: b2s(uts.Version),
-		Machine: b2s(uts.Machine),
+		Name:    "Linux",
+		Release: h.KernelVersion,
+		Machine: h.KernelArch,
 	}
 }
 
 func GetCPU() *CPUInfo {
-	info := &CPUInfo{}
-	data, err := os.ReadFile("/proc/cpuinfo")
-	if err != nil {
-		return info
+	cpus, err := cpu.Info()
+	if err != nil || len(cpus) == 0 {
+		return &CPUInfo{Name: "Unknown"}
 	}
-
-	cores := 0
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
-	for scanner.Scan() {
-		line := scanner.Text()
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-
-		switch key {
-		case "model name":
-			if info.Name == "" {
-				info.Name = value
-			}
-		case "cpu cores":
-			c, _ := strconv.Atoi(value)
-			if c > cores {
-				cores = c
-			}
-		case "processor":
-			info.Cores++
-		}
+	physicalCores, _ := cpu.Counts(false)
+	info := &CPUInfo{
+		Name:   cpus[0].ModelName,
+		MaxMHz: cpus[0].Mhz,
 	}
-
-	if cores > 0 {
-		info.Cores = cores
+	if physicalCores > 0 {
+		info.Cores = physicalCores
+	} else {
+		info.Cores = len(cpus)
 	}
-	if info.Name == "" {
-		info.Name = "Unknown"
-	}
-
 	return info
 }
 
@@ -221,91 +186,43 @@ func detectGPUName(card string) string {
 }
 
 func GetMemory() *MemoryInfo {
-	info := &MemoryInfo{}
-	data, err := os.ReadFile("/proc/meminfo")
+	v, err := mem.VirtualMemory()
 	if err != nil {
-		return info
+		return &MemoryInfo{}
 	}
-
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-
-		val, _ := strconv.ParseUint(fields[1], 10, 64)
-		valKB := val * 1024
-
-		switch fields[0] {
-		case "MemTotal:":
-			info.Total = valKB
-		case "MemAvailable:":
-			info.Available = valKB
-		}
+	return &MemoryInfo{
+		Total:     v.Total,
+		Used:      v.Used,
+		Available: v.Available,
 	}
-
-	if info.Total > 0 && info.Available > 0 {
-		info.Used = info.Total - info.Available
-	}
-	return info
 }
 
 func GetDisk() []*DiskInfo {
-	var disks []*DiskInfo
-
-	data, err := os.ReadFile("/proc/mounts")
+	partitions, err := disk.Partitions(false)
 	if err != nil {
-		return disks
+		return nil
 	}
 
+	var disks []*DiskInfo
 	seen := map[string]bool{}
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
+
+	for _, p := range partitions {
+		if seen[p.Mountpoint] {
 			continue
 		}
+		seen[p.Mountpoint] = true
 
-		device := fields[0]
-		mountpoint := fields[1]
-		fstype := fields[2]
-
-		if !strings.HasPrefix(device, "/dev/") {
-			continue
-		}
-
-		if seen[mountpoint] {
-			continue
-		}
-		seen[mountpoint] = true
-
-		isPseudo := false
-		for _, prefix := range []string{"/dev/loop", "/dev/ram", "/dev/sr"} {
-			if strings.HasPrefix(device, prefix) {
-				isPseudo = true
-				break
-			}
-		}
-		if isPseudo {
-			continue
-		}
-
-		var stat syscall.Statfs_t
-		if err := syscall.Statfs(mountpoint, &stat); err != nil {
-			continue
-		}
-
-		total := stat.Blocks * uint64(stat.Bsize)
-		available := stat.Bavail * uint64(stat.Bsize)
-		if total == 0 {
+		usage, err := disk.Usage(p.Mountpoint)
+		if err != nil || usage.Total == 0 {
 			continue
 		}
 
 		disks = append(disks, &DiskInfo{
-			Path:       mountpoint,
-			Total:      total,
-			Used:       total - available,
-			Available:  available,
-			Filesystem: fstype,
+			Path:       p.Mountpoint,
+			Total:      usage.Total,
+			Used:       usage.Used,
+			Available:  usage.Free,
+			Filesystem: p.Fstype,
 		})
 	}
 
@@ -313,20 +230,11 @@ func GetDisk() []*DiskInfo {
 }
 
 func GetUptime() *UptimeInfo {
-	info := &UptimeInfo{}
-	data, err := os.ReadFile("/proc/uptime")
+	u, err := host.Uptime()
 	if err != nil {
-		return info
+		return &UptimeInfo{}
 	}
-
-	parts := strings.Fields(string(data))
-	if len(parts) == 0 {
-		return info
-	}
-
-	up, _ := strconv.ParseFloat(parts[0], 64)
-	info.Uptime = uint64(up)
-	return info
+	return &UptimeInfo{Uptime: u}
 }
 
 func GetShell() *ShellInfo {
@@ -513,85 +421,36 @@ func GetHost() *HostInfo {
 }
 
 func GetSwap() *SwapInfo {
-	info := &SwapInfo{}
-	data, err := os.ReadFile("/proc/meminfo")
+	s, err := mem.SwapMemory()
 	if err != nil {
-		return info
+		return &SwapInfo{}
 	}
-
-	var total, free uint64
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		val, _ := strconv.ParseUint(fields[1], 10, 64)
-		valKB := val * 1024
-		switch fields[0] {
-		case "SwapTotal:":
-			total = valKB
-		case "SwapFree:":
-			free = valKB
-		}
+	return &SwapInfo{
+		Total: s.Total,
+		Used:  s.Used,
 	}
-
-	info.Total = total
-	if total > free {
-		info.Used = total - free
-	}
-	return info
 }
 
 func GetBattery() *BatteryInfo {
+	batteries, err := battery.GetAll()
+	if err != nil || len(batteries) == 0 {
+		return &BatteryInfo{}
+	}
+	b := batteries[0]
 	info := &BatteryInfo{}
-
-	entries, err := os.ReadDir("/sys/class/power_supply")
-	if err != nil {
-		return info
+	if b.Full > 0 {
+		info.Percentage = int(b.Current / b.Full * 100)
 	}
-
-	for _, entry := range entries {
-		name := entry.Name()
-		if !strings.HasPrefix(name, "BAT") && !strings.HasPrefix(name, "AC") && name != "ADP1" && name != "ACAD" {
-			// check if it's a battery
-			typePath := filepath.Join("/sys/class/power_supply", name, "type")
-			typeData, _ := os.ReadFile(typePath)
-			typeStr := strings.TrimSpace(string(typeData))
-			if typeStr != "Battery" {
-				continue
-			}
-		}
-
-		capPath := filepath.Join("/sys/class/power_supply", name, "capacity")
-		capData, err := os.ReadFile(capPath)
-		if err != nil {
-			continue
-		}
-		cap, _ := strconv.Atoi(strings.TrimSpace(string(capData)))
-		info.Percentage = cap
-
-		statusPath := filepath.Join("/sys/class/power_supply", name, "status")
-		statusData, _ := os.ReadFile(statusPath)
-		status := strings.TrimSpace(string(statusData))
-
-		switch status {
-		case "Charging":
-			info.Status = "Charging"
-		case "Discharging":
-			info.Status = "Discharging"
-		case "Full":
-			info.Status = "Full"
-		case "Not charging":
-			info.Status = "AC Connected"
-		default:
-			info.Status = status
-		}
-
-		if info.Percentage > 0 {
-			break
-		}
+	switch b.State.Raw {
+	case battery.Charging:
+		info.Status = "Charging"
+	case battery.Discharging:
+		info.Status = "Discharging"
+	case battery.Full:
+		info.Status = "Full"
+	case battery.Idle:
+		info.Status = "AC Connected"
 	}
-
 	return info
 }
 

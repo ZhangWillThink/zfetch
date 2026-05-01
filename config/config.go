@@ -1,11 +1,11 @@
 package config
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+
+	"github.com/muhammadmuzzammil1998/jsonc"
 )
 
 type ModuleOptions map[string]interface{}
@@ -29,86 +29,15 @@ func DefaultConfig() *Config {
 	}
 }
 
-func parseJSONC(data []byte) ([]byte, error) {
-	var result strings.Builder
-	result.Grow(len(data))
-
-	inString := false
-	escaping := false
-	inSingleComment := false
-	inMultiComment := false
-
-	for i := 0; i < len(data); i++ {
-		b := data[i]
-
-		if inSingleComment {
-			if b == '\n' {
-				inSingleComment = false
-				result.WriteByte(b)
-			}
-			continue
-		}
-
-		if inMultiComment {
-			if b == '*' && i+1 < len(data) && data[i+1] == '/' {
-				inMultiComment = false
-				i++
-			}
-			continue
-		}
-
-		if inString {
-			if escaping {
-				escaping = false
-			} else if b == '\\' {
-				escaping = true
-			} else if b == '"' {
-				inString = false
-			}
-			result.WriteByte(b)
-			continue
-		}
-
-		if b == '"' {
-			inString = true
-			result.WriteByte(b)
-			continue
-		}
-
-		if b == '/' && i+1 < len(data) {
-			next := data[i+1]
-			if next == '/' {
-				inSingleComment = true
-				i++
-				continue
-			}
-			if next == '*' {
-				inMultiComment = true
-				i++
-				continue
-			}
-		}
-
-		result.WriteByte(b)
-	}
-
-	return []byte(result.String()), nil
-}
-
 func LoadFromFile(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 
-	cleanData, err := parseJSONC(data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse JSONC: %w", err)
-	}
-
 	cfg := DefaultConfig()
-	if err := json.Unmarshal(cleanData, cfg); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	if err := jsonc.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
 	return cfg, nil
