@@ -33,7 +33,33 @@ func New(cfg *config.Config, pipe bool) *Display {
 	if ccfg.ColorTitle == "default" {
 		ccfg.ColorTitle = "bright_white"
 	}
+	ConfigureColorPolicy(pipe)
 	return &Display{cfg: &ccfg, pipe: pipe}
+}
+
+func ConfigureColorPolicy(pipeOnly bool) {
+	ConfigureColorPolicyWithEnv(pipeOnly, "", "")
+}
+
+// ConfigureColorPolicyWithEnv exposes env overrides for testing (EMPTY string = use os.Getenv).
+func ConfigureColorPolicyWithEnv(pipeOnly bool, noColor, forceColor string) {
+	disable := pipeOnly
+	nc := noColor
+	fc := forceColor
+	if nc == "" {
+		nc = os.Getenv("NO_COLOR")
+	}
+	if fc == "" {
+		fc = os.Getenv("FORCE_COLOR")
+	}
+	if strings.TrimSpace(nc) != "" {
+		disable = true
+	}
+	switch strings.ToLower(strings.TrimSpace(fc)) {
+	case "1", "true", "yes":
+		disable = false
+	}
+	SetColorDisabled(disable)
 }
 
 type indexedResult struct {
@@ -459,49 +485,124 @@ func (d *Display) renderInline(infos []modules.ModuleInfo) {
 	keyColor := d.cfg.ColorKeys
 	titleColor := d.cfg.ColorTitle
 	tw := getTerminalWidth()
+	sepStr := d.cfg.Separator
+	sepLen := runewidth.StringWidth(sepStr)
 
 	for i, info := range infos {
 		if info.Key == "separator" {
-			sepW := 40
+			w := 40
 			if tw > 0 {
-				sepW = tw
+				w = tw
 			}
-			sepLine := strings.Repeat("─", sepW)
-			fmt.Println(Paint(sepLine, keyColor))
+			fmt.Println(Paint(strings.Repeat("─", w), keyColor))
 			continue
 		}
-
-		var right string
+		if info.Key == "" && info.Value == "" {
+			fmt.Println()
+			continue
+		}
 		if info.Value == "" {
-			right = runewidth.FillRight(info.Key, maxKeyWidth)
-		} else {
-			pk := runewidth.FillRight(info.Key, maxKeyWidth)
-			right = pk + " " + d.cfg.Separator + " " + info.Value
+			d.renderInlineKeyOnly(i, info, maxKeyWidth, tw, keyColor, titleColor)
+			continue
 		}
+		d.renderInlineKeyValue(info, maxKeyWidth, sepStr, sepLen, tw, keyColor)
+	}
+}
 
-		lineWidth := runewidth.StringWidth(right)
-		if tw > 0 && lineWidth > tw {
-			truncateAt := tw - 3
-			if truncateAt < 1 {
-				truncateAt = 1
-			}
-			right = runewidth.Truncate(right, truncateAt, "...")
-		}
-
-		isTitle := i == 0 && info.Value == ""
+func (d *Display) renderInlineKeyOnly(i int, info modules.ModuleInfo, maxKw, tw int, keyColor, titleColor string) {
+	isTitle := i == 0 && info.Value == ""
+	padded := runewidth.FillRight(info.Key, maxKw)
+	if tw <= 0 || runewidth.StringWidth(padded) <= tw {
 		if isTitle {
-			fmt.Println(PaintTitle(right, titleColor))
+			fmt.Println(PaintTitle(padded, titleColor))
 		} else {
-			coloredKey, rest := splitColored(right, maxKeyWidth, keyColor, false)
+			coloredKey, rest := splitColored(padded, maxKw, keyColor, false)
 			fmt.Print(coloredKey)
-			if info.UsagePercent > 0 {
-				fmt.Print(Paint(rest, usageColor(info.UsagePercent)))
-			} else {
-				fmt.Print(rest)
-			}
+			fmt.Print(rest)
 			fmt.Println()
 		}
+		return
 	}
+	lines := wrapParagraph(info.Key, tw)
+	for li, ln := range lines {
+		if isTitle {
+			fmt.Println(PaintTitle(ln, titleColor))
+			continue
+		}
+		if li == 0 {
+			coloredKey, rest := splitColored(ln, maxKw, keyColor, false)
+			fmt.Print(coloredKey)
+			fmt.Println(rest)
+			continue
+		}
+		fmt.Println(Paint(ln, keyColor))
+	}
+}
+
+func (d *Display) renderInlineKeyValue(info modules.ModuleInfo, maxKw int, sep string, sepLen, tw int, keyColor string) {
+	pk := runewidth.FillRight(info.Key, maxKw)
+	head := pk + " " + sep + " "
+	headW := runewidth.StringWidth(head)
+	if tw > 0 && headW >= tw {
+		short := head + info.Value
+		if runewidth.StringWidth(short) > tw {
+			short = runewidth.Truncate(short, tw, "...")
+		}
+		d.emitInlineKVLine(info, short, maxKw, keyColor)
+		return
+	}
+
+	whole := head + info.Value
+	if tw <= 0 || runewidth.StringWidth(whole) <= tw {
+		d.emitInlineKVLine(info, whole, maxKw, keyColor)
+		return
+	}
+
+	firstBudget := tw - headW
+	chunks := wrapParagraph(info.Value, firstBudget)
+	if len(chunks) == 0 {
+		chunks = []string{info.Value}
+	}
+	prefixLen := maxKw + 1 + sepLen + 1
+	contAvail := tw - prefixLen
+	if contAvail < 12 {
+		short := whole
+		if runewidth.StringWidth(short) > tw {
+			short = runewidth.Truncate(short, tw, "...")
+		}
+		d.emitInlineKVLine(info, short, maxKw, keyColor)
+		return
+	}
+
+	line0 := head + chunks[0]
+	d.emitInlineKVLine(info, line0, maxKw, keyColor)
+
+	indent := strings.Repeat(" ", prefixLen)
+	for _, c := range chunks[1:] {
+		parts := wrapParagraph(c, contAvail)
+		if len(parts) == 0 {
+			parts = []string{c}
+		}
+		for _, p := range parts {
+			line := indent + p
+			if info.UsagePercent > 0 {
+				fmt.Println(Paint(line, usageColor(info.UsagePercent)))
+			} else {
+				fmt.Println(line)
+			}
+		}
+	}
+}
+
+func (d *Display) emitInlineKVLine(info modules.ModuleInfo, line string, maxKw int, keyColor string) {
+	coloredKey, rest := splitColored(line, maxKw, keyColor, false)
+	fmt.Print(coloredKey)
+	if info.UsagePercent > 0 {
+		fmt.Print(Paint(rest, usageColor(info.UsagePercent)))
+	} else {
+		fmt.Print(rest)
+	}
+	fmt.Println()
 }
 
 func splitColored(right string, _ int, color string, isTitle bool) (coloredKey string, rest string) {

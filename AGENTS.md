@@ -5,13 +5,25 @@
 ```bash
 bash scripts/build.sh   # Build all platforms (Linux/macOS, amd64/arm64) to dist/
 
-go build              # Linux native
+go build ./...          # Linux native
+go vet ./...            # Static analysis
+go test ./...           # Unit tests
 GOOS=darwin GOARCH=arm64 go build ./...   # macOS Apple Silicon
 GOOS=darwin GOARCH=amd64 go build ./...   # macOS Intel
 GOOS=windows GOARCH=amd64 go build ./...  # Windows
 ```
 
-No tests, no linter, no CI configured. Only `go build` for verification.
+CI: `.github/workflows/ci.yml` runs `go vet`, `go test`, and cross-builds for darwin/windows.
+
+## Dependencies (`go.mod`)
+
+The project uses Go modules. Notable libraries include:
+
+- `github.com/shirou/gopsutil/v4` — host, CPU, memory, disk partitions
+- `github.com/distatus/battery` — battery state (Unix)
+- `github.com/mattn/go-runewidth` — terminal display width / wrapping
+- `golang.org/x/term` — TTY size detection
+- `github.com/muhammadmuzzammil1998/jsonc` — JSONC config parsing
 
 ## Architecture
 
@@ -23,8 +35,6 @@ modules/           → One file per info module, auto-registered via init()
 internal/sysinfo/  → Platform-specific data collection (build tags)
 presets/           → default.jsonc, all.jsonc
 ```
-
-Zero dependencies beyond Go stdlib.
 
 ## Platform-specific code (`internal/sysinfo/`)
 

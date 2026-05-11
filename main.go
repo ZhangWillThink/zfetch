@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/term"
 
@@ -195,12 +197,30 @@ func main() {
 
 	if statMode {
 		cfg.Pipe = true
+		printModuleTimings(cfg.Structure)
+		return
 	}
 
 	pipedOutput := cfg.Pipe || !term.IsTerminal(int(os.Stdout.Fd()))
 
 	d := display.New(cfg, pipedOutput)
 	d.Render()
+}
+
+func printModuleTimings(structure string) {
+	for _, key := range strings.Split(structure, ":") {
+		key = strings.TrimSpace(key)
+		if key == "" || key == "separator" {
+			continue
+		}
+		m := modules.Get(key)
+		if m == nil {
+			continue
+		}
+		start := time.Now()
+		_ = m.Run()
+		fmt.Printf("%s\t%s\n", key, time.Since(start).Round(time.Microsecond))
+	}
 }
 
 const defaultConfigContent = `{
@@ -247,6 +267,10 @@ Colors:
   black, red, green, yellow, blue, magenta, cyan, white,
   bright_black, bright_red, bright_green, bright_yellow,
   bright_blue, bright_magenta, bright_cyan, bright_white
+
+Environment:
+  NO_COLOR                  If set (any non-empty value), disable ANSI colors when using a TTY
+  FORCE_COLOR               If 1/true/yes, force colors on (overrides NO_COLOR) when not piping
 
 Structure example:
   zfetch -s "title:separator:os:kernel:uptime:shell:cpu:memory:disk"

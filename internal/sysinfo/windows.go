@@ -3,10 +3,14 @@
 package sysinfo
 
 import (
+	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
@@ -16,7 +20,9 @@ import (
 
 func GetOS() *OSInfo {
 	info := &OSInfo{Name: "Windows"}
-	out, err := exec.Command("cmd", "/c", "ver").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "cmd", "/c", "ver").Output()
 	if err == nil {
 		info.Version = strings.TrimSpace(string(out))
 	}
@@ -69,14 +75,25 @@ func GetGPU() []*GPUInfo {
 		out, err = exec.Command("powershell", cmdArgs...).Output()
 	}
 
-	var gpus []*GPUInfo
+	var raw []string
 	if err == nil {
 		for _, line := range strings.Split(string(out), "\n") {
 			line = strings.TrimSpace(line)
 			if line != "" {
-				gpus = append(gpus, &GPUInfo{Name: line})
+				raw = append(raw, line)
 			}
 		}
+	}
+
+	var gpus []*GPUInfo
+	have := map[string]bool{}
+	for _, name := range raw {
+		key := strings.ToLower(name)
+		if have[key] {
+			continue
+		}
+		have[key] = true
+		gpus = append(gpus, &GPUInfo{Name: name})
 	}
 
 	if len(gpus) == 0 {
@@ -91,28 +108,48 @@ func GetDisk() []*DiskInfo {
 		return []*DiskInfo{{Path: "C:\\"}}
 	}
 
-	var disks []*DiskInfo
-	seen := map[string]bool{}
+	byDevice := make(map[string]*DiskInfo)
+	var noDev []*DiskInfo
+	seenMount := map[string]bool{}
 
 	for _, p := range partitions {
-		if seen[p.Mountpoint] {
+		if seenMount[p.Mountpoint] {
 			continue
 		}
-		seen[p.Mountpoint] = true
+		seenMount[p.Mountpoint] = true
 
 		usage, err := disk.Usage(p.Mountpoint)
 		if err != nil || usage.Total == 0 {
 			continue
 		}
 
-		disks = append(disks, &DiskInfo{
+		di := &DiskInfo{
 			Path:       p.Mountpoint,
 			Total:      usage.Total,
 			Used:       usage.Used,
 			Available:  usage.Free,
 			Filesystem: p.Fstype,
-		})
+		}
+
+		devKey := normalizeWindowsVolDevice(p.Device)
+		if devKey != "" {
+			if prev, ok := byDevice[devKey]; !ok || windowsPreferMount(prev.Path, di.Path) {
+				byDevice[devKey] = di
+			}
+			continue
+		}
+		noDev = append(noDev, di)
 	}
+
+	disks := make([]*DiskInfo, 0, len(byDevice)+len(noDev))
+	for _, di := range byDevice {
+		disks = append(disks, di)
+	}
+	disks = append(disks, noDev...)
+
+	sort.Slice(disks, func(i, j int) bool {
+		return strings.ToLower(disks[i].Path) < strings.ToLower(disks[j].Path)
+	})
 
 	if len(disks) == 0 {
 		disks = append(disks, &DiskInfo{Path: "C:\\"})
@@ -120,25 +157,63 @@ func GetDisk() []*DiskInfo {
 	return disks
 }
 
+func normalizeWindowsVolDevice(device string) string {
+	d := strings.TrimSpace(device)
+	d = strings.TrimPrefix(d, `\\.\`)
+	if d == "" {
+		return ""
+	}
+	return strings.ToUpper(d)
+}
+
+func windowsPreferMount(cur, cand string) bool {
+	cu := strings.ToUpper(cur)
+	cc := strings.ToUpper(cand)
+	if strings.HasPrefix(cc, `C:\`) && !strings.HasPrefix(cu, `C:\`) {
+		return true
+	}
+	if strings.HasPrefix(cu, `C:\`) && !strings.HasPrefix(cc, `C:\`) {
+		return false
+	}
+	return len(cc) < len(cu)
+}
+
+func findPowerShellExe() string {
+	for _, name := range []string{"pwsh.exe", "pwsh", "powershell.exe", "powershell"} {
+		if p, err := exec.LookPath(name); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
 func GetShell() *ShellInfo {
-	info := &ShellInfo{Name: "cmd"}
-
-	if pwsh, ok := os.LookupEnv("POWERSHELL_DISTRIBUTION_CHANNEL"); ok && pwsh != "" {
-		info.Name = "pwsh"
-	} else if psVer, ok := os.LookupEnv("PSModulePath"); ok && psVer != "" {
-		info.Name = "powershell"
+	info := &ShellInfo{}
+	shellPath := strings.TrimSpace(os.Getenv("SHELL"))
+	if shellPath != "" {
+		base := strings.ToLower(strings.TrimSuffix(filepath.Base(shellPath), ".exe"))
+		switch base {
+		case "bash", "zsh", "fish", "sh":
+			info.Path = shellPath
+			info.Name = filepath.Base(shellPath)
+			info.Version = probeShellDashC(shellPath)
+			return info
+		}
 	}
 
-	if shell := os.Getenv("COMSPEC"); shell != "" {
-		info.Path = shell
-	} else {
-		info.Path = "cmd.exe"
+	if psPath := findPowerShellExe(); psPath != "" {
+		info.Path = psPath
+		info.Name = strings.TrimSuffix(strings.ToLower(filepath.Base(psPath)), ".exe")
+		info.Version = probePowerShellVersion(psPath)
+		return info
 	}
 
-	if ver, ok := os.LookupEnv("POWERSHELL_VERSION"); ok && ver != "" {
-		info.Version = ver
+	comspec := os.Getenv("COMSPEC")
+	if comspec == "" {
+		comspec = `C:\Windows\System32\cmd.exe`
 	}
-
+	info.Path = comspec
+	info.Name = filepath.Base(comspec)
 	return info
 }
 
@@ -168,11 +243,11 @@ func GetWM() *WMInfo {
 }
 
 func GetTerminal() *TerminalInfo {
-	term := os.Getenv("TERM_PROGRAM")
-	if term == "" {
-		term = "Windows Terminal"
+	name, version := TerminalFromEnv()
+	if strings.TrimSpace(name) == "" && os.Getenv("WT_SESSION") != "" {
+		name = "Windows Terminal"
 	}
-	return &TerminalInfo{Name: term}
+	return &TerminalInfo{Name: terminalNameOrUnknown(name), Version: version}
 }
 
 func GetResolution() *ResolutionInfo {
@@ -243,11 +318,16 @@ func GetBattery() *BatteryInfo {
 
 func GetLocale() *LocaleInfo {
 	info := &LocaleInfo{}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 	cmdArgs := []string{"-NoProfile", "-Command",
 		`Get-Culture | Select-Object -ExpandProperty Name`}
-	out, err := exec.Command("powershell", cmdArgs...).Output()
+	out, err := exec.CommandContext(ctx, "powershell", cmdArgs...).Output()
 	if err == nil {
 		info.Locale = strings.TrimSpace(string(out))
+	}
+	if info.Locale == "" {
+		info.Locale = LocaleFromUnixEnv()
 	}
 	return info
 }

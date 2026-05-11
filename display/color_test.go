@@ -26,6 +26,7 @@ func TestGetColor(t *testing.T) {
 }
 
 func TestPaint(t *testing.T) {
+	SetColorDisabled(false)
 	result := Paint("hello", "red")
 	if !strings.Contains(result, "\033[31m") {
 		t.Error("Paint should contain red color code")
@@ -42,6 +43,7 @@ func TestPaint(t *testing.T) {
 }
 
 func TestPaintTitle(t *testing.T) {
+	SetColorDisabled(false)
 	result := PaintTitle("hello", "green")
 	if !strings.Contains(result, "\033[1m") {
 		t.Error("PaintTitle should contain bold code")

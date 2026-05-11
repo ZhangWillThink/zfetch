@@ -32,6 +32,7 @@ func TestNewDisplayNilConfig(t *testing.T) {
 }
 
 func TestNewDisplayPipe(t *testing.T) {
+	t.Cleanup(func() { SetColorDisabled(false) })
 	d := New(config.DefaultConfig(), true)
 	if !d.pipe {
 		t.Error("expected pipe=true")
@@ -39,6 +40,7 @@ func TestNewDisplayPipe(t *testing.T) {
 }
 
 func TestSplitColored(t *testing.T) {
+	SetColorDisabled(false)
 	tests := []struct {
 		input    string
 		isTitle  bool
@@ -111,9 +113,8 @@ func TestGetTerminalWidth(t *testing.T) {
 }
 
 func TestRenderInline(t *testing.T) {
-	cfg := config.DefaultConfig()
-	cfg.Separator = ": "
-	d := &Display{cfg: cfg, pipe: false}
+	d := New(config.DefaultConfig(), false)
+	d.cfg.Separator = ": "
 
 	infos := []modules.ModuleInfo{
 		{Key: "User@host", Value: ""},

@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -84,33 +85,23 @@ func GetCPU() *CPUInfo {
 	return info
 }
 
-func isPseudoFs(fstype string) bool {
-	switch fstype {
-	case "tmpfs", "devtmpfs", "devfs", "proc", "sysfs",
-		"cgroup", "cgroup2", "devpts", "fusectl", "securityfs",
-		"debugfs", "tracefs", "hugetlbfs", "mqueue", "overlay",
-		"squashfs", "bpf", "configfs", "pstore", "efivarfs":
-		return true
-	}
-	return false
-}
-
 func GetDisk() []*DiskInfo {
 	partitions, err := disk.Partitions(false)
 	if err != nil {
 		return nil
 	}
 
-	var disks []*DiskInfo
-	seen := map[string]bool{}
+	byDev := make(map[uint64]*DiskInfo)
+	var noStat []*DiskInfo
+	seenPath := map[string]bool{}
 
 	for _, p := range partitions {
-		if seen[p.Mountpoint] {
+		if seenPath[p.Mountpoint] {
 			continue
 		}
-		seen[p.Mountpoint] = true
+		seenPath[p.Mountpoint] = true
 
-		if isPseudoFs(p.Fstype) {
+		if IsExcludedFilesystem(p.Fstype) {
 			continue
 		}
 
@@ -119,14 +110,30 @@ func GetDisk() []*DiskInfo {
 			continue
 		}
 
-		disks = append(disks, &DiskInfo{
+		di := &DiskInfo{
 			Path:       p.Mountpoint,
 			Total:      usage.Total,
 			Used:       usage.Used,
 			Available:  usage.Free,
 			Filesystem: p.Fstype,
-		})
+		}
+
+		if dev, ok := statMountDev(p.Mountpoint); ok {
+			if prev, dup := byDev[dev]; !dup || preferMount(prev.Path, di.Path) {
+				byDev[dev] = di
+			}
+			continue
+		}
+		noStat = append(noStat, di)
 	}
+
+	disks := make([]*DiskInfo, 0, len(byDev)+len(noStat))
+	for _, di := range byDev {
+		disks = append(disks, di)
+	}
+	disks = append(disks, noStat...)
+
+	sort.Slice(disks, func(i, j int) bool { return disks[i].Path < disks[j].Path })
 
 	return disks
 }
@@ -142,31 +149,7 @@ func GetShell() *ShellInfo {
 
 	parts := strings.Split(shellPath, "/")
 	info.Name = parts[len(parts)-1]
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	var versionCmd string
-	switch info.Name {
-	case "bash":
-		versionCmd = "echo $BASH_VERSION"
-	case "zsh":
-		versionCmd = "zsh --version"
-	case "fish":
-		versionCmd = "fish --version"
-	default:
-		versionCmd = info.Name + " --version"
-	}
-
-	cmd := exec.CommandContext(ctx, info.Name, "-c", versionCmd)
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
-	out, err := cmd.Output()
-	if err == nil {
-		info.Version = strings.TrimSpace(string(out))
-		if len(info.Version) > 30 {
-			info.Version = info.Version[:30]
-		}
-	}
+	info.Version = probeShellDashC(shellPath)
 
 	return info
 }
@@ -288,26 +271,11 @@ func GetWM() *WMInfo {
 }
 
 func GetTerminal() *TerminalInfo {
-	info := &TerminalInfo{}
-
-	term := os.Getenv("TERM")
-	termProgram := os.Getenv("TERM_PROGRAM")
-
-	if termProgram != "" {
-		info.Name = termProgram
-	} else {
-		info.Name = term
+	name, version := TerminalFromEnv()
+	return &TerminalInfo{
+		Name:    terminalNameOrUnknown(name),
+		Version: version,
 	}
-
-	if termProgramVersion := os.Getenv("TERM_PROGRAM_VERSION"); termProgramVersion != "" {
-		info.Version = termProgramVersion
-	}
-
-	if info.Name == "" {
-		info.Name = "unknown"
-	}
-
-	return info
 }
 
 func GetResolution() *ResolutionInfo {
@@ -443,11 +411,5 @@ func allSame(ss []string) bool {
 }
 
 func GetLocale() *LocaleInfo {
-	info := &LocaleInfo{}
-
-	if lang := os.Getenv("LANG"); lang != "" {
-		info.Locale = lang
-	}
-
-	return info
+	return &LocaleInfo{Locale: LocaleFromUnixEnv()}
 }

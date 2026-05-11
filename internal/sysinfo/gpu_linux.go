@@ -85,7 +85,11 @@ type gpuLspci struct {
 }
 
 func listPCIeDisplayControllers(ctx context.Context) []gpuLspci {
-	cmd := exec.CommandContext(ctx, "lspci", "-mm")
+	lp, err := exec.LookPath("lspci")
+	if err != nil {
+		return nil
+	}
+	cmd := exec.CommandContext(ctx, lp, "-mm")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil
@@ -383,7 +387,16 @@ func dedupeByName(gs []*GPUInfo) []*GPUInfo {
 	out := []*GPUInfo{}
 	for _, g := range gs {
 		key := strings.ToLower(strings.TrimSpace(g.Name))
-		if key == "" || seen[key] {
+		if key == "" {
+			continue
+		}
+		// WSL / Hyper-V expose several distinct firmware strings for the same class
+		// of virtual adapter (e.g. "Device 008a" vs "Basic Render Driver"); fold them
+		// to a single entry when nothing more specific (NVIDIA/Intel PCI name) exists.
+		if isMicrosoftHyperVDisplayName(g.Name) {
+			key = "__microsoft_hyperv_virtual_display__"
+		}
+		if seen[key] {
 			continue
 		}
 		seen[key] = true
@@ -393,4 +406,9 @@ func dedupeByName(gs []*GPUInfo) []*GPUInfo {
 		return gs
 	}
 	return out
+}
+
+func isMicrosoftHyperVDisplayName(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	return strings.HasPrefix(n, "microsoft corporation")
 }

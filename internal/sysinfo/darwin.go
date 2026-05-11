@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -68,7 +69,9 @@ func GetCPU() *CPUInfo {
 
 func GetGPU() []*GPUInfo {
 	var gpus []*GPUInfo
-	out, err := exec.Command("system_profiler", "SPDisplaysDataType").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "system_profiler", "SPDisplaysDataType").Output()
 	if err != nil {
 		return gpus
 	}
@@ -135,6 +138,18 @@ func GetGPU() []*GPUInfo {
 		gpus = append(gpus, currentGPU)
 	}
 
+	var deduped []*GPUInfo
+	seenName := map[string]bool{}
+	for _, g := range gpus {
+		key := strings.ToLower(strings.TrimSpace(g.Name))
+		if key == "" || seenName[key] {
+			continue
+		}
+		seenName[key] = true
+		deduped = append(deduped, g)
+	}
+	gpus = deduped
+
 	if len(gpus) == 0 {
 		gpus = append(gpus, &GPUInfo{Name: "Unknown"})
 	}
@@ -147,28 +162,49 @@ func GetDisk() []*DiskInfo {
 		return nil
 	}
 
-	var disks []*DiskInfo
-	seen := map[string]bool{}
+	byDev := make(map[uint64]*DiskInfo)
+	var noStat []*DiskInfo
+	seenPath := map[string]bool{}
 
 	for _, p := range partitions {
-		if seen[p.Mountpoint] {
+		if seenPath[p.Mountpoint] {
 			continue
 		}
-		seen[p.Mountpoint] = true
+		seenPath[p.Mountpoint] = true
+
+		if IsExcludedFilesystem(p.Fstype) {
+			continue
+		}
 
 		usage, err := disk.Usage(p.Mountpoint)
 		if err != nil || usage.Total == 0 {
 			continue
 		}
 
-		disks = append(disks, &DiskInfo{
+		di := &DiskInfo{
 			Path:       p.Mountpoint,
 			Total:      usage.Total,
 			Used:       usage.Used,
 			Available:  usage.Free,
 			Filesystem: p.Fstype,
-		})
+		}
+
+		if dev, ok := statMountDev(p.Mountpoint); ok {
+			if prev, dup := byDev[dev]; !dup || preferMount(prev.Path, di.Path) {
+				byDev[dev] = di
+			}
+			continue
+		}
+		noStat = append(noStat, di)
 	}
+
+	disks := make([]*DiskInfo, 0, len(byDev)+len(noStat))
+	for _, di := range byDev {
+		disks = append(disks, di)
+	}
+	disks = append(disks, noStat...)
+
+	sort.Slice(disks, func(i, j int) bool { return disks[i].Path < disks[j].Path })
 
 	if len(disks) == 0 {
 		var stat syscall.Statfs_t
@@ -194,38 +230,11 @@ func GetShell() *ShellInfo {
 		shellPath = "/bin/zsh"
 	}
 	parts := strings.Split(shellPath, "/")
-	info := &ShellInfo{
-		Name: parts[len(parts)-1],
-		Path: shellPath,
+	return &ShellInfo{
+		Name:    parts[len(parts)-1],
+		Path:    shellPath,
+		Version: probeShellDashC(shellPath),
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	var versionCmd string
-	switch info.Name {
-	case "bash":
-		versionCmd = "echo $BASH_VERSION"
-	case "zsh":
-		versionCmd = "zsh --version"
-	case "fish":
-		versionCmd = "fish --version"
-	default:
-		versionCmd = info.Name + " --version"
-	}
-
-	cmd := exec.CommandContext(ctx, info.Name, "-c", versionCmd)
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
-	out, err := cmd.Output()
-	if err == nil {
-		version := strings.TrimSpace(string(out))
-		if len(version) > 30 {
-			version = version[:30]
-		}
-		info.Version = version
-	}
-
-	return info
 }
 
 func GetPackages() *PackageInfo {
@@ -322,21 +331,11 @@ func GetWM() *WMInfo {
 }
 
 func GetTerminal() *TerminalInfo {
-	termProgram := os.Getenv("TERM_PROGRAM")
-	if termProgram == "" {
-		termProgram = os.Getenv("TERM")
+	name, version := TerminalFromEnv()
+	return &TerminalInfo{
+		Name:    terminalNameOrUnknown(name),
+		Version: version,
 	}
-	info := &TerminalInfo{Name: termProgram}
-
-	if version := os.Getenv("TERM_PROGRAM_VERSION"); version != "" {
-		info.Version = version
-	}
-
-	if info.Name == "" {
-		info.Name = "unknown"
-	}
-
-	return info
 }
 
 func GetResolution() *ResolutionInfo {
@@ -409,11 +408,5 @@ func GetBattery() *BatteryInfo {
 }
 
 func GetLocale() *LocaleInfo {
-	info := &LocaleInfo{}
-
-	if lang := os.Getenv("LANG"); lang != "" {
-		info.Locale = lang
-	}
-
-	return info
+	return &LocaleInfo{Locale: LocaleFromUnixEnv()}
 }

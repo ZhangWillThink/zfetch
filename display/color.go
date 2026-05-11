@@ -2,7 +2,18 @@ package display
 
 import (
 	"strings"
+	"sync/atomic"
 )
+
+var colorDisabled atomic.Bool
+
+func SetColorDisabled(v bool) {
+	colorDisabled.Store(v)
+}
+
+func ColorDisabled() bool {
+	return colorDisabled.Load()
+}
 
 var Colors = map[string]string{
 	"default":        "\033[0m",
@@ -34,6 +45,9 @@ func GetColor(name string) string {
 }
 
 func Paint(text, colorName string) string {
+	if colorDisabled.Load() {
+		return text
+	}
 	var b strings.Builder
 	b.WriteString(GetColor(colorName))
 	b.WriteString(text)
@@ -42,6 +56,9 @@ func Paint(text, colorName string) string {
 }
 
 func PaintTitle(text, colorName string) string {
+	if colorDisabled.Load() {
+		return text
+	}
 	var b strings.Builder
 	b.WriteString("\033[1m")
 	b.WriteString(GetColor(colorName))
