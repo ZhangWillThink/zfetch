@@ -9,7 +9,7 @@ type testModule struct {
 	info []ModuleInfo
 }
 
-func (m *testModule) Name() string     { return m.name }
+func (m *testModule) Name() string      { return m.name }
 func (m *testModule) Run() []ModuleInfo { return m.info }
 
 func TestRegisterAndGet(t *testing.T) {

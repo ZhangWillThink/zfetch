@@ -113,7 +113,7 @@ func TestGetTerminalWidth(t *testing.T) {
 func TestRenderInline(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Separator = ": "
-	d := &Display{cfg: cfg, pipe: false, termWidth: 120}
+	d := &Display{cfg: cfg, pipe: false}
 
 	infos := []modules.ModuleInfo{
 		{Key: "User@host", Value: ""},

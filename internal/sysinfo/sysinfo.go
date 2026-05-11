@@ -28,10 +28,11 @@ type CPUInfo struct {
 }
 
 type GPUInfo struct {
-	Name      string
-	Driver    string
-	MemoryMiB int
-	Type      string
+	Name        string
+	Driver      string
+	MemoryMiB   int
+	Type        string
+	VendorPCIID string // e.g. 0x10de (filled on Linux sysfs path; used for virtualization filter)
 }
 
 type MemoryInfo struct {

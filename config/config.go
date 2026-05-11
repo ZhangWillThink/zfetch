@@ -9,13 +9,13 @@ import (
 )
 
 type Config struct {
-	Structure  string                   `json:"structure"`
-	Logo       string                   `json:"logo,omitempty"`
-	Separator  string                   `json:"separator"`
-	ColorKeys  string                   `json:"colorKeys"`
-	ColorTitle string                   `json:"colorTitle"`
-	Pipe       bool                     `json:"pipe"`
-	Modules    map[string]interface{}   `json:"modules,omitempty"`
+	Structure  string                 `json:"structure"`
+	Logo       string                 `json:"logo,omitempty"`
+	Separator  string                 `json:"separator"`
+	ColorKeys  string                 `json:"colorKeys"`
+	ColorTitle string                 `json:"colorTitle"`
+	Pipe       bool                   `json:"pipe"`
+	Modules    map[string]interface{} `json:"modules,omitempty"`
 }
 
 func DefaultConfig() *Config {

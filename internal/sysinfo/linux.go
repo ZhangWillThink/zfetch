@@ -6,8 +6,6 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -84,94 +82,6 @@ func GetCPU() *CPUInfo {
 		info.Cores = len(cpus)
 	}
 	return info
-}
-
-func GetGPU() []*GPUInfo {
-	var gpus []*GPUInfo
-
-	drmDir := "/sys/class/drm"
-	entries, err := os.ReadDir(drmDir)
-	if err != nil {
-		return gpus
-	}
-
-	for _, entry := range entries {
-		name := entry.Name()
-		if !strings.HasPrefix(name, "card") {
-			continue
-		}
-
-		cardPath := filepath.Join(drmDir, name, "device")
-
-		vendorData, _ := os.ReadFile(filepath.Join(cardPath, "vendor"))
-		if vendor := strings.TrimSpace(string(vendorData)); vendor == "" {
-			continue
-		}
-
-		gpuName := detectGPUName(filepath.Join(drmDir, name))
-		if gpuName == "" {
-			continue
-		}
-
-		gpu := &GPUInfo{Name: strings.TrimSpace(gpuName)}
-
-		if vramData, err := os.ReadFile(filepath.Join(cardPath, "mem_info_vram_total")); err == nil {
-			bytes, _ := strconv.ParseUint(strings.TrimSpace(string(vramData)), 10, 64)
-			gpu.MemoryMiB = int(bytes / (1024 * 1024))
-		}
-
-		if bootData, err := os.ReadFile(filepath.Join(cardPath, "boot_vga")); err == nil {
-			if strings.TrimSpace(string(bootData)) == "1" {
-				gpu.Type = "Discrete"
-			}
-		}
-
-		if gpu.Type == "" {
-			driverPath := filepath.Join(cardPath, "driver")
-			if resolved, err := filepath.EvalSymlinks(driverPath); err == nil {
-				if strings.Contains(resolved, "i915") || strings.Contains(resolved, "amdgpu/apu") {
-					gpu.Type = "Integrated"
-				} else {
-					gpu.Type = "Discrete"
-				}
-			}
-		}
-
-		gpus = append(gpus, gpu)
-	}
-
-	if len(gpus) == 0 {
-		out, err := exec.Command("lspci", "-mm").Output()
-		if err == nil {
-			for _, line := range strings.Split(string(out), "\n") {
-				if strings.Contains(line, "VGA") || strings.Contains(line, "3D") || strings.Contains(line, "Display") {
-					parts := strings.Split(line, `"`)
-					if len(parts) >= 4 {
-						gpus = append(gpus, &GPUInfo{Name: strings.TrimSpace(parts[3])})
-					}
-				}
-			}
-		}
-	}
-
-	return gpus
-}
-
-func detectGPUName(cardPath string) string {
-	entries, _ := os.ReadDir(filepath.Join(cardPath, "device"))
-	for _, e := range entries {
-		if e.IsDir() && strings.HasPrefix(e.Name(), "drm") {
-			namePath := filepath.Join(cardPath, "device", e.Name())
-			vendorData, _ := os.ReadFile(filepath.Join(namePath, "vendor_name"))
-			deviceData, _ := os.ReadFile(filepath.Join(namePath, "device_name"))
-			vendor := strings.TrimSpace(string(vendorData))
-			dev := strings.TrimSpace(string(deviceData))
-			if vendor != "" || dev != "" {
-				return vendor + " " + dev
-			}
-		}
-	}
-	return ""
 }
 
 func isPseudoFs(fstype string) bool {
