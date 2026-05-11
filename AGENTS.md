@@ -3,9 +3,11 @@
 ## Build & Test
 
 ```bash
-bash scripts/build.sh   # Build all platforms (Linux/macOS, amd64/arm64) to dist/
+bash scripts/build.sh   # Builds all targets to dist/ and injects `-ldflags` CurrentVersion :
+                          # Uses env ZFETCH_VERSION when set,
+                          # else matching git tag, else v0.0.0-dev+<short hash>
 
-go build ./...          # Linux native
+go build ./...          # Static analysis / local build (uses source default `v0.0.0-dev` unless you pass -ldflags)
 go vet ./...            # Static analysis
 go test ./...           # Unit tests
 GOOS=darwin GOARCH=arm64 go build ./...   # macOS Apple Silicon
@@ -13,7 +15,7 @@ GOOS=darwin GOARCH=amd64 go build ./...   # macOS Intel
 GOOS=windows GOARCH=amd64 go build ./...  # Windows
 ```
 
-CI: `.github/workflows/ci.yml` runs `go vet`, `go test`, and cross-builds for darwin/windows.
+CI: `.github/workflows/ci.yml` runs on changes to Go sources, modules, scripts, presets, `install.sh`, or the workflow itself — `go vet`, `go test`, and cross-builds for darwin/windows.
 
 ## Dependencies (`go.mod`)
 
@@ -61,7 +63,8 @@ The module registry uses a blank import `_ "github.com/WillZhang/zfetch/modules"
 ## Config
 
 - Format: JSONC (JSON with `//` and `/* */` comments)
-- Default path: `~/.config/zfetch/config.jsonc`
+- Default path: `~/.config/zfetch/config.jsonc` — **`main.go` loads this automatically when it exists**, unless `-c` / `--config` selects another preset/path.
+- `--list-presets` enumerates `*.jsonc` (and extensionless presets) beside the executable, under `~/.config/zfetch/`, and under `~/.local/share/zfetch/presets/`.
 - Custom parser in `config/config.go` — uses standard `encoding/json` after stripping comments
 
 ## Logos (`display/logo.go`)

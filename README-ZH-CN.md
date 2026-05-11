@@ -4,7 +4,7 @@
 
 [English](./README.md)
 
-- **零依赖** — 纯 Go 标准库
+- **单个静态二进制** — 体积小，目标机无需额外安装运行时
 - **跨平台** — Linux、macOS、Windows
 - **可定制** — JSONC 配置、预设、颜色、自定义 Logo
 - **脚本友好** — 管道模式输出纯文本
@@ -17,10 +17,10 @@
 curl -fsSL https://github.com/ZhangWillThink/zfetch/releases/latest/download/install.sh | bash
 ```
 
-或指定版本：
+或固定在某个发布版本（可复现安装）：
 
 ```bash
-curl -fsSL https://github.com/ZhangWillThink/zfetch/releases/latest/download/install.sh | ZFETCH_VERSION=v0.2.0 bash
+curl -fsSL https://github.com/ZhangWillThink/zfetch/releases/latest/download/install.sh | ZFETCH_VERSION=v0.5.1 bash
 ```
 
 ### 从源码构建
@@ -95,7 +95,7 @@ zfetch --pipe
 | `--list-modules`           | 列出所有模块                 |
 | `--list-logos`             | 列出可用 Logo                |
 | `--list-presets`           | 列出可用预设                 |
-| `--gen-config`             | 显示默认配置路径             |
+| `--gen-config`            | 将默认配置写入 ~/.config/zfetch/config.jsonc |
 | `upgrade`                  | 升级到最新版本               |
 | `uninstall`                | 卸载 zfetch                  |
 
@@ -109,7 +109,7 @@ zfetch --pipe
 
 配置文件使用 **JSONC** 格式（支持 `//` 和 `/* */` 注释）。
 
-**默认路径:** `~/.config/zfetch/config.jsonc`
+**默认路径:** `~/.config/zfetch/config.jsonc`。若文件存在且在未传入 `-c` / `--config` 时运行 `zfetch`，会自动加载；需要预设或绝对路径时用 `-c` 指定。
 
 ```jsonc
 {
@@ -127,10 +127,10 @@ zfetch --pipe
 ## 构建
 
 ```bash
-bash scripts/build.sh   # 构建所有平台到 dist/
+bash scripts/build.sh    # 输出 dist 并用 -ldflags 写入版本（环境变量 ZFETCH_VERSION，否则为当前 git 标签，否则 v0.0.0-dev+<短哈希>）
 
-# Linux (原生)
-go build
+# Linux（原生）
+go build ./...           # 默认内置版本为 v0.0.0-dev，除非自行传入与 build.sh 相同的 -ldflags
 
 # macOS Intel
 GOOS=darwin GOARCH=amd64 go build ./...

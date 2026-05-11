@@ -3,8 +3,26 @@ name: ci
 on:
   push:
     branches: [main, master]
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/**"
+      - "scripts/**"
+      - "presets/**"
+      - "install.sh"
+      - "CHANGELOG.md"
   pull_request:
     branches: [main, master]
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/**"
+      - "scripts/**"
+      - "presets/**"
+      - "install.sh"
+      - "CHANGELOG.md"
 
 jobs:
   build:

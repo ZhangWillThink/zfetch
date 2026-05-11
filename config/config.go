@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/muhammadmuzzammil1998/jsonc"
 )
@@ -94,4 +96,55 @@ func ListConfigPaths() []string {
 		)
 	}
 	return paths
+}
+
+// ListPresetNames returns preset names discoverable in the same places FindPreset searches
+// (bundled presets next to the binary, then user config and share directories).
+func ListPresetNames() []string {
+	seen := make(map[string]bool)
+	var names []string
+
+	add := func(base string) {
+		base = strings.TrimSpace(base)
+		if base == "" {
+			return
+		}
+		key := strings.ToLower(base)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		names = append(names, base)
+	}
+
+	scanDir := func(dir string) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			n := e.Name()
+			switch {
+			case strings.HasSuffix(n, ".jsonc"):
+				add(strings.TrimSuffix(n, ".jsonc"))
+			case filepath.Ext(n) == "":
+				add(n)
+			}
+		}
+	}
+
+	if exe, err := os.Executable(); err == nil {
+		scanDir(filepath.Join(filepath.Dir(exe), "presets"))
+	}
+
+	if homeDir, err := os.UserHomeDir(); err == nil {
+		scanDir(filepath.Join(homeDir, ".config", "zfetch"))
+		scanDir(filepath.Join(homeDir, ".local", "share", "zfetch", "presets"))
+	}
+
+	sort.Strings(names)
+	return names
 }

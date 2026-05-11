@@ -17,6 +17,9 @@ import (
 
 const minSidebarRight = 22
 
+// Limit concurrent probes from modules (fewer goroutines / less scheduler churn on tiny modules).
+const maxConcurrentModuleRuns = 8
+
 type Display struct {
 	cfg  *config.Config
 	pipe bool
@@ -75,11 +78,12 @@ func (d *Display) Render() {
 		return
 	}
 
-	var (
-		lineInfos = make([]modules.ModuleInfo, 0, len(moduleKeys))
-		resultsCh = make(chan indexedResult, len(moduleKeys))
-		wg        sync.WaitGroup
-	)
+	lineInfos := make([]modules.ModuleInfo, 0, len(moduleKeys))
+	type runSlot struct {
+		idx int
+		mod modules.Module
+	}
+	jobs := make([]runSlot, 0, len(moduleKeys))
 
 	for idx, key := range moduleKeys {
 		key = strings.TrimSpace(key)
@@ -98,11 +102,33 @@ func (d *Display) Render() {
 			continue
 		}
 
-		wg.Add(1)
-		go func(i int, mod modules.Module) {
-			defer wg.Done()
-			resultsCh <- indexedResult{idx: i, info: mod.Run()}
-		}(idx, m)
+		jobs = append(jobs, runSlot{idx: idx, mod: m})
+	}
+
+	resultsCh := make(chan indexedResult, len(jobs))
+	var wg sync.WaitGroup
+
+	workers := maxConcurrentModuleRuns
+	if n := len(jobs); n < workers {
+		workers = n
+	}
+	if workers > 0 {
+		jobCh := make(chan runSlot)
+		for range workers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for j := range jobCh {
+					resultsCh <- indexedResult{idx: j.idx, info: j.mod.Run()}
+				}
+			}()
+		}
+		go func() {
+			for _, j := range jobs {
+				jobCh <- j
+			}
+			close(jobCh)
+		}()
 	}
 
 	go func() {

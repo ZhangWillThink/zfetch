@@ -108,8 +108,9 @@ func main() {
 
 	if listPresets {
 		fmt.Println("Available presets:")
-		fmt.Println("  default")
-		fmt.Println("  all")
+		for _, p := range config.ListPresetNames() {
+			fmt.Printf("  %s\n", p)
+		}
 		return
 	}
 
@@ -173,6 +174,15 @@ func main() {
 			os.Exit(1)
 		}
 		cfg = loadedCfg
+	} else if dc := config.FindDefaultConfig(); dc != "" {
+		if fi, err := os.Stat(dc); err == nil && !fi.IsDir() {
+			loadedCfg, err := config.LoadFromFile(dc)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not load %s: %v (using defaults)\n", dc, err)
+			} else {
+				cfg = loadedCfg
+			}
+		}
 	}
 
 	if structStr != "" {
@@ -254,7 +264,7 @@ Options:
   --list-logos            List available logos
   --list-config-paths     List search paths for config files
   --print-structure       Print the default structure
-  --gen-config            Generate default config file
+  --gen-config            Write default config to ~/.config/zfetch/config.jsonc
   --stat                  Show time usage for individual modules
   -s, --structure <str>   Set structure of the fetch
   -c, --config <file>     Load a config file
@@ -276,6 +286,7 @@ Structure example:
   zfetch -s "title:separator:os:kernel:uptime:shell:cpu:memory:disk"
 
 Config files use JSONC format (JSON with comments).
-Generate a default config with: zfetch --gen-config
+When no -c/--config flag is passed, ~/.config/zfetch/config.jsonc is loaded if it exists.
+Generate a default config file with: zfetch --gen-config
 `)
 }

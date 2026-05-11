@@ -4,7 +4,7 @@ A fast, feature-rich system information tool for the terminal — inspired by ne
 
 [中文文档](./README-ZH-CN.md)
 
-- **Zero dependencies** — pure Go standard library
+- **Single static binary** — small Go runtime, no separate runtime install on the target machine
 - **Cross-platform** — Linux, macOS, Windows
 - **Customizable** — JSONC config, presets, colors, custom logo
 - **Script-friendly** — pipe mode with plain-text output
@@ -17,10 +17,10 @@ A fast, feature-rich system information tool for the terminal — inspired by ne
 curl -fsSL https://github.com/ZhangWillThink/zfetch/releases/latest/download/install.sh | bash
 ```
 
-Or specify a version:
+Or pin a release tag (recommended for reproducible installs):
 
 ```bash
-curl -fsSL https://github.com/ZhangWillThink/zfetch/releases/latest/download/install.sh | ZFETCH_VERSION=v0.2.0 bash
+curl -fsSL https://github.com/ZhangWillThink/zfetch/releases/latest/download/install.sh | ZFETCH_VERSION=v0.5.1 bash
 ```
 
 ### Build from source
@@ -95,7 +95,7 @@ zfetch --pipe
 | `--list-modules`          | List all modules                         |
 | `--list-logos`            | List available logos                     |
 | `--list-presets`          | List available presets                   |
-| `--gen-config`            | Show default config path                 |
+| `--gen-config`            | Write default config file to ~/.config/zfetch/config.jsonc |
 | `upgrade`                 | Upgrade to the latest version            |
 | `uninstall`               | Uninstall zfetch                         |
 
@@ -109,7 +109,7 @@ zfetch --pipe
 
 Config files use **JSONC** format (JSON with `//` and `/* */` comments).
 
-**Default path:** `~/.config/zfetch/config.jsonc`
+**Default path:** `~/.config/zfetch/config.jsonc` — if this file exists, it is loaded automatically when you run `zfetch` without `-c` / `--config`. Use `-c` to load a named preset or an absolute path instead.
 
 ```jsonc
 {
@@ -127,10 +127,9 @@ Use `zfetch --list-config-paths` to see all search paths.
 ## Building
 
 ```bash
-bash scripts/build.sh   # Build all platforms to dist/
+bash scripts/build.sh    # Writes dist binaries; stamps version via -ldflags (ZFETCH_VERSION=… env, else exact git tag, else v0.0.0-dev+<hash>)
 
-# Linux (native)
-go build
+go build ./...           # Uses built-in fallback version v0.0.0-dev unless you pass -ldflags (see scripts/build.sh)
 
 # macOS Intel
 GOOS=darwin GOARCH=amd64 go build ./...

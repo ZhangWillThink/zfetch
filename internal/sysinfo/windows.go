@@ -3,13 +3,16 @@
 package sysinfo
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -65,14 +68,60 @@ func GetCPU() *CPUInfo {
 	return info
 }
 
+var (
+	winScreenHostLocaleOnce sync.Once
+	winScreenHostLocale     struct {
+		Resolutions []string
+		Host        string
+		Locale      string
+	}
+)
+
+func probeWinScreenHostLocale() {
+	winScreenHostLocaleOnce.Do(func() {
+		ps := findPowerShellExe()
+		if ps == "" {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		script := `$ErrorActionPreference='SilentlyContinue';` +
+			`Add-Type -AssemblyName System.Windows.Forms;` +
+			`$res=@([System.Windows.Forms.Screen]::AllScreens | ForEach-Object { "$($_.Bounds.Width)x$($_.Bounds.Height)" });` +
+			`$h=''; try { $h=(Get-CimInstance Win32_ComputerSystem).Model.Trim() } catch {} ;` +
+			`$loc=''; try { $loc=(Get-Culture).Name.Trim() } catch {} ;` +
+			`@{ res=$res; host=$h; loc=$loc } | ConvertTo-Json -Compress -Depth 6`
+		out, err := exec.CommandContext(ctx, ps, "-NoProfile", "-Command", script).Output()
+		if err != nil {
+			return
+		}
+		var dec struct {
+			Res  []string `json:"res"`
+			Host string   `json:"host"`
+			Loc  string   `json:"loc"`
+		}
+		decJSON := strings.TrimSpace(string(bytes.TrimPrefix(bytes.TrimSpace(out), []byte{0xef, 0xbb, 0xbf})))
+		if json.Unmarshal([]byte(decJSON), &dec) != nil {
+			return
+		}
+		winScreenHostLocale.Resolutions = dec.Res
+		winScreenHostLocale.Host = strings.TrimSpace(dec.Host)
+		winScreenHostLocale.Locale = strings.TrimSpace(dec.Loc)
+	})
+}
+
 func GetGPU() []*GPUInfo {
+	ps := findPowerShellExe()
+	if ps == "" {
+		return []*GPUInfo{{Name: "Unknown"}}
+	}
 	cmdArgs := []string{"-NoProfile", "-Command",
 		`Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }`}
-	out, err := exec.Command("powershell", cmdArgs...).Output()
+	out, err := exec.Command(ps, cmdArgs...).Output()
 	if err != nil {
 		cmdArgs = []string{"-NoProfile", "-Command",
 			`Get-WmiObject Win32_VideoController | ForEach-Object { $_.Name }`}
-		out, err = exec.Command("powershell", cmdArgs...).Output()
+		out, err = exec.Command(ps, cmdArgs...).Output()
 	}
 
 	var raw []string
@@ -219,9 +268,12 @@ func GetShell() *ShellInfo {
 
 func GetPackages() *PackageInfo {
 	info := &PackageInfo{}
-
+	ps := findPowerShellExe()
+	if ps == "" {
+		return info
+	}
 	args := []string{"-NoProfile", "-Command", `winget list --count 2>$null | Measure-Object -Line | Select-Object -ExpandProperty Lines`}
-	out, err := exec.Command("powershell", args...).Output()
+	out, err := exec.Command(ps, args...).Output()
 	if err == nil {
 		n := strings.TrimSpace(string(out))
 		if n != "" {
@@ -251,30 +303,20 @@ func GetTerminal() *TerminalInfo {
 }
 
 func GetResolution() *ResolutionInfo {
+	probeWinScreenHostLocale()
 	info := &ResolutionInfo{}
-	cmdArgs := []string{"-NoProfile", "-Command",
-		`Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.Screen]::AllScreens | ForEach-Object { "$($_.Bounds.Width)x$($_.Bounds.Height)" }`}
-	out, err := exec.Command("powershell", cmdArgs...).Output()
-	if err == nil {
-		for _, line := range strings.Split(string(out), "\n") {
-			line = strings.TrimSpace(line)
-			if line != "" {
-				info.Resolutions = append(info.Resolutions, line)
-			}
+	for _, line := range winScreenHostLocale.Resolutions {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			info.Resolutions = append(info.Resolutions, line)
 		}
 	}
 	return info
 }
 
 func GetHost() *HostInfo {
-	info := &HostInfo{}
-	cmdArgs := []string{"-NoProfile", "-Command",
-		`Get-CimInstance Win32_ComputerSystem | Select-Object -ExpandProperty Model`}
-	out, err := exec.Command("powershell", cmdArgs...).Output()
-	if err == nil {
-		info.Product = strings.TrimSpace(string(out))
-	}
-	return info
+	probeWinScreenHostLocale()
+	return &HostInfo{Product: winScreenHostLocale.Host}
 }
 
 func GetSwap() *SwapInfo {
@@ -290,42 +332,42 @@ func GetSwap() *SwapInfo {
 
 func GetBattery() *BatteryInfo {
 	info := &BatteryInfo{}
-	cmdArgs := []string{"-NoProfile", "-Command",
-		`Get-CimInstance Win32_Battery | Select-Object -ExpandProperty EstimatedChargeRemaining`}
-	out, err := exec.Command("powershell", cmdArgs...).Output()
-	if err == nil {
-		pctStr := strings.TrimSpace(string(out))
-		if pct, errConv := strconv.Atoi(pctStr); errConv == nil && pct >= 0 {
-			info.Percentage = pct
-		}
+	ps := findPowerShellExe()
+	if ps == "" {
+		return info
 	}
-
-	statusArgs := []string{"-NoProfile", "-Command",
-		`Get-CimInstance Win32_Battery | Select-Object -ExpandProperty BatteryStatus`}
-	statusOut, err := exec.Command("powershell", statusArgs...).Output()
-	if err == nil {
-		switch strings.TrimSpace(string(statusOut)) {
-		case "1":
-			info.Status = "Discharging"
-		case "2":
-			info.Status = "AC Connected"
-		case "6", "7", "8", "9", "10", "11":
-			info.Status = "Charging"
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	script := `$ErrorActionPreference='SilentlyContinue';` +
+		`$b=(Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue) | Select-Object -First 1;` +
+		`if(-not $b){ @{ pct=-1; st='' } | ConvertTo-Json -Compress; return };` +
+		`$pct=[int]$b.EstimatedChargeRemaining; $bs=[int]$b.BatteryStatus; $st='';` +
+		`switch($bs){1{$st='Discharging'}2{$st='AC Connected'} {(6..11)-contains$_}{$st='Charging'} };` +
+		`@{ pct=$pct; st=$st } | ConvertTo-Json -Compress`
+	out, err := exec.CommandContext(ctx, ps, "-NoProfile", "-Command", script).Output()
+	if err != nil {
+		return info
 	}
+	var dec struct {
+		Pct int    `json:"pct"`
+		St  string `json:"st"`
+	}
+	raw := bytes.TrimSpace(out)
+	raw = bytes.TrimPrefix(raw, []byte{0xef, 0xbb, 0xbf})
+	if json.Unmarshal(raw, &dec) != nil {
+		return info
+	}
+	if dec.Pct >= 0 && dec.Pct <= 100 {
+		info.Percentage = dec.Pct
+	}
+	info.Status = dec.St
 	return info
 }
 
 func GetLocale() *LocaleInfo {
-	info := &LocaleInfo{}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	cmdArgs := []string{"-NoProfile", "-Command",
-		`Get-Culture | Select-Object -ExpandProperty Name`}
-	out, err := exec.CommandContext(ctx, "powershell", cmdArgs...).Output()
-	if err == nil {
-		info.Locale = strings.TrimSpace(string(out))
-	}
+	probeWinScreenHostLocale()
+	info := &LocaleInfo{Locale: winScreenHostLocale.Locale}
+	info.Locale = strings.TrimSpace(info.Locale)
 	if info.Locale == "" {
 		info.Locale = LocaleFromUnixEnv()
 	}

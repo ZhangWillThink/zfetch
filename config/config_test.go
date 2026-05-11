@@ -132,6 +132,35 @@ func TestFindDefaultConfig(t *testing.T) {
 	}
 }
 
+func TestListPresetNames_homeDirectories(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cfgDir := filepath.Join(home, ".config", "zfetch")
+	if err := os.MkdirAll(cfgDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "foo.jsonc"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	names := ListPresetNames()
+	var hasFoo bool
+	for _, n := range names {
+		if n == "foo" {
+			hasFoo = true
+		}
+	}
+	if !hasFoo {
+		t.Fatalf(`expected preset "foo" from home config dir, got %v`, names)
+	}
+	for i := 1; i < len(names); i++ {
+		if names[i] < names[i-1] {
+			t.Fatal("preset names must be sorted")
+		}
+	}
+}
+
 func TestListConfigPaths(t *testing.T) {
 	paths := ListConfigPaths()
 	if len(paths) == 0 {

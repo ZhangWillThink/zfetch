@@ -13,12 +13,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25.x"
 
       - name: Build all platforms
+        env:
+          ZFETCH_VERSION: ${{ github.ref_name }}
         run: bash scripts/build.sh
 
       - name: Prepare release artifacts
@@ -27,9 +31,16 @@ jobs:
           cd dist
           sha256sum zfetch-* install.sh > SHA256SUMS
 
+      - name: Write release notes (install / upgrade / uninstall)
+        env:
+          VERSION: ${{ github.ref_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: bash scripts/write-release-notes.sh dist/RELEASE_NOTES.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          body_path: dist/RELEASE_NOTES.md
           files: |
             dist/zfetch-linux-amd64
             dist/zfetch-linux-arm64
@@ -38,4 +49,3 @@ jobs:
             dist/zfetch-windows-amd64.exe
             dist/install.sh
             dist/SHA256SUMS
-          generate_release_notes: true
