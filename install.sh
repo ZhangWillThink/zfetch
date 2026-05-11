@@ -30,7 +30,7 @@ add_to_path() {
 }
 
 REPO="ZhangWillThink/zfetch"
-VERSION="${ZFETCH_VERSION:-v0.4.0}"
+VERSION="${ZFETCH_VERSION:-v0.5.1}"
 BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
 
 case "$(uname -sm)" in

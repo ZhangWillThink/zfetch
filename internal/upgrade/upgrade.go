@@ -13,7 +13,7 @@ import (
 
 const Repo = "ZhangWillThink/zfetch"
 
-var CurrentVersion = "v0.4.0"
+var CurrentVersion = "v0.5.1"
 
 type release struct {
 	TagName string `json:"tag_name"`
@@ -102,7 +102,11 @@ func getLatestVersion() (string, error) {
 }
 
 func assetName() string {
-	return fmt.Sprintf("zfetch-%s-%s", runtime.GOOS, runtime.GOARCH)
+	name := fmt.Sprintf("zfetch-%s-%s", runtime.GOOS, runtime.GOARCH)
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return name
 }
 
 func downloadFile(url, path string) error {

@@ -1,0 +1,41 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+
+      - name: Build all platforms
+        run: bash scripts/build.sh
+
+      - name: Prepare release artifacts
+        run: |
+          cp install.sh dist/install.sh
+          cd dist
+          sha256sum zfetch-* install.sh > SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/zfetch-linux-amd64
+            dist/zfetch-linux-arm64
+            dist/zfetch-darwin-amd64
+            dist/zfetch-darwin-arm64
+            dist/zfetch-windows-amd64.exe
+            dist/install.sh
+            dist/SHA256SUMS
+          generate_release_notes: true
